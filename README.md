@@ -2,7 +2,7 @@
 
 > Tier 1 NER-based PII detection for [bx-AISentinel](https://github.com/mrigsby/bx-AISentinel). Plugs into the sentinel's external-detector plugin seam and catches free-form PII that regex / entropy / registry miss.
 
-**Status:** v0.3.2-pre · functional with real assets · [Changelog](CHANGELOG.md)
+**Status:** v0.3.3-pre · functional with real assets · [Changelog](CHANGELOG.md)
 
 ## What this is
 

@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.3.3-pre] - 2026-04-18
+
+### Fixed
+
+- **`OnnxNerDetector` now reads its own ColdBox module settings from `.boxlang.json → modules.bx-aisentinel-onnx.settings`.** Previously, `init()` only looked at `arguments.settings` (what the sentinel passed via `externalDetectorOptions`). The README and demo help page both documented the `modules.bx-aisentinel-onnx` config pattern, but nothing actually read from there — a fresh install following the docs produced a detector with no `modelPath` / `modelName`, `OnnxSession.ensureLoaded()` failed the `fileExists` check silently, and `scan()` returned `[]` with no explanation. Detector now pulls module settings as defaults and merges caller-supplied `arguments.settings` on top.
+- **`OnnxSession.ensureLoaded()` now logs to the `bx-aisentinel-onnx` channel when the modelPath / tokenizerPath guard rejects a call.** Silent early-returns previously left operators with no signal — the detector would report `loaded` in one breath via the plugin seam and then return empty hits in the next. Log fires once per process per failure to avoid spamming on every `scan()` call.
+
+### Known behavior unchanged
+
+- The sentinel's `externalDetectorOptions[id]` still takes precedence over module settings — that's how tests + advanced hosts inject overrides. Only the default lookup path changed.
+
 ## [0.3.2-pre] - 2026-04-18
 
 ### Fixed

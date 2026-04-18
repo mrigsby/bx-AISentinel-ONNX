@@ -62,10 +62,12 @@ class singleton {
 
         if ( !len( variables.modelPath ) || !fileExists( variables.modelPath ) ) {
             variables.loadError = "modelPath missing or file does not exist: " & variables.modelPath;
+            _logLoadFailure();
             return false;
         }
         if ( !len( variables.tokenizerPath ) || !fileExists( variables.tokenizerPath ) ) {
             variables.loadError = "tokenizerPath missing or file does not exist: " & variables.tokenizerPath;
+            _logLoadFailure();
             return false;
         }
 
@@ -110,6 +112,22 @@ class singleton {
      * Caller should verify `isReady()` first; this throws if called before
      * load (catching it would hide a caller bug).
      */
+    /**
+     * Emit the cached `loadError` to the `bx-aisentinel-onnx` LogBox channel
+     * once per process (first failure wins). Without this, a missing-asset
+     * condition silently produced `scan()` → `[]` and operators had no way
+     * to see why. Guarded to not spam the log on every `scan()` call.
+     */
+    private void function _logLoadFailure() {
+        if ( variables.loadErrorLogged ?: false ) return;
+        variables.loadErrorLogged = true;
+        writeLog(
+            type = "error",
+            file = "bx-aisentinel-onnx",
+            text = "OnnxSession.ensureLoaded failed: " & variables.loadError
+        );
+    }
+
     struct function tokenize( required string text ) {
         if ( !variables.loaded ) {
             throw( message: "OnnxSession.tokenize called before session was loaded. Call ensureLoaded() first." );

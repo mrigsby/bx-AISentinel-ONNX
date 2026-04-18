@@ -38,42 +38,86 @@ class {
         variables.priority        = 2;
         variables.sourceName      = "OnnxNerDetector";
         variables.contractVersion = "1.0.0";
-        variables.settings        = arguments.settings;
+
+        // Pull the module's own ColdBox settings as defaults (host apps
+        // configure the detector via `.boxlang.json → modules.bx-aisentinel-onnx`,
+        // which is the idiomatic ColdBox pattern). Explicit `arguments.settings`
+        // wins — that's how the sentinel passes `externalDetectorOptions[ id ]`
+        // through, and how tests inject fixtures.
+        var moduleDefaults = _readColdBoxModuleSettings();
+        variables.settings = _mergeSettings( moduleDefaults, arguments.settings );
 
         // Asset manager resolves model paths + validates. Caller-supplied
         // overrides take precedence (tests inject a fixture manager).
-        variables.assetManager = arguments.settings.assetManager
-            ?: new ModelAssetManager( settings: arguments.settings );
+        variables.assetManager = variables.settings.assetManager
+            ?: new ModelAssetManager( settings: variables.settings );
 
         // Session — either caller-supplied (tests + advanced hosts) or built
         // from paths the asset manager resolves.
-        variables.session = arguments.settings.session ?: new OnnxSession( config: {
+        variables.session = variables.settings.session ?: new OnnxSession( config: {
             "modelPath"     : variables.assetManager.resolveModelPath(),
             "tokenizerPath" : variables.assetManager.resolveTokenizerPath()
         } );
 
         // Decoder — same DI-friendly pattern as the session.
-        variables.decoder = arguments.settings.decoder ?: new EntityDecoder(
+        variables.decoder = variables.settings.decoder ?: new EntityDecoder(
             category        : "pii-ner",
             priority        : variables.priority,
             sourceName      : variables.sourceName,
-            confidenceFloor : arguments.settings.confidenceFloor ?: 0.5
+            confidenceFloor : variables.settings.confidenceFloor ?: 0.5
         );
 
         // Label mapping — caller override wins; otherwise pull from
         // SupportedModels for the configured modelName; otherwise empty
         // (scan() will refuse to decode until it's populated).
         var meta = _resolveModelMetadata();
-        variables.id2label        = arguments.settings.id2label        ?: ( meta.id2label        ?: {} );
-        variables.labelToSentinel = arguments.settings.labelToSentinel ?: ( meta.labelToSentinel ?: {} );
+        variables.id2label        = variables.settings.id2label        ?: ( meta.id2label        ?: {} );
+        variables.labelToSentinel = variables.settings.labelToSentinel ?: ( meta.labelToSentinel ?: {} );
 
         // Eager initialization — only on explicit opt-in. Default is lazy so
         // host apps that never use Tier 1 pay no boot cost.
-        if ( arguments.settings.eagerInit ?: false ) {
+        if ( variables.settings.eagerInit ?: false ) {
             variables.session.ensureLoaded();
         }
 
         return this;
+    }
+
+    /**
+     * Pull the module's ColdBox-registered settings block so host apps can
+     * configure the detector via `.boxlang.json → modules.bx-aisentinel-onnx`
+     * — the idiomatic ColdBox pattern. Returns an empty struct when running
+     * outside a ColdBox context (tests, standalone BoxLang, direct
+     * `createObject` instantiation).
+     *
+     * This is the layer that makes the user-facing config actually reach
+     * `ModelAssetManager` + `OnnxSession` without requiring the sentinel to
+     * forward every ONNX-specific setting via `externalDetectorOptions`.
+     */
+    private struct function _readColdBoxModuleSettings() {
+        try {
+            if ( !structKeyExists( application, "cbController" ) ) return {};
+            var moduleConfig = application.cbController.getSetting( "modules" );
+            if ( !isStruct( moduleConfig ) || !structKeyExists( moduleConfig, "bx-aisentinel-onnx" ) ) return {};
+            var moduleEntry = moduleConfig[ "bx-aisentinel-onnx" ];
+            if ( !isStruct( moduleEntry ) || !structKeyExists( moduleEntry, "settings" ) ) return {};
+            return isStruct( moduleEntry.settings ) ? duplicate( moduleEntry.settings ) : {};
+        } catch ( any e ) {
+            return {};
+        }
+    }
+
+    /**
+     * Shallow merge — `override` keys win over `base` keys. `base` is the
+     * module's ColdBox settings (defaults); `override` is the explicit
+     * `arguments.settings` passed to `init()` (call-site override).
+     */
+    private struct function _mergeSettings( required struct base, required struct override ) {
+        var out = duplicate( arguments.base );
+        for ( var key in arguments.override ) {
+            out[ key ] = arguments.override[ key ];
+        }
+        return out;
     }
 
     // ─── IDetector@1.0.0 contract surface ────────────────────────────────

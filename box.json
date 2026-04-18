@@ -20,7 +20,7 @@
         "security"
     ],
     "dependencies": {
-        "cbjavaloader": "^3.0.0"
+        "cbjavaloader": "^2.5.0"
     },
     "devDependencies": {
         "testbox": "^7.0.0"

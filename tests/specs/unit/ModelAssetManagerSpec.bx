@@ -1,0 +1,350 @@
+/**
+ * ModelAssetManagerSpec — unit coverage for the path resolution +
+ * validation + ensure-assets pipeline.
+ *
+ * No network calls. `auto-download` mode is exercised against a mocked
+ * `_downloadFile` via MockBox so we verify the orchestration (safety
+ * rails, re-validation, correct URL source, clear errors) without
+ * hitting the internet.
+ *
+ * Fixture strategy: each test writes small "fake" model + tokenizer
+ * files into a temp directory and points the manager at them.
+ */
+class extends="testbox.system.BaseSpec" {
+
+    function beforeAll() {
+        variables.tmpRoot = expandPath( "./.tmp-asset-tests/" );
+        if ( directoryExists( variables.tmpRoot ) ) {
+            directoryDelete( variables.tmpRoot, true );
+        }
+        directoryCreate( variables.tmpRoot, true );
+    }
+
+    function afterAll() {
+        if ( directoryExists( variables.tmpRoot ) ) {
+            directoryDelete( variables.tmpRoot, true );
+        }
+    }
+
+    function run() {
+
+        describe( "ModelAssetManager — path resolution", function() {
+
+            it( "joins modelPath with model.onnx / tokenizer.json", function() {
+                var m = _make( modelPath = "/tmp/foo/" );
+                expect( m.resolveModelPath()     ).toBe( "/tmp/foo/model.onnx" );
+                expect( m.resolveTokenizerPath() ).toBe( "/tmp/foo/tokenizer.json" );
+            } );
+
+            it( "adds a separator when modelPath has no trailing slash", function() {
+                var m = _make( modelPath = "/tmp/foo" );
+                expect( m.resolveModelPath() ).toBe( "/tmp/foo/model.onnx" );
+            } );
+
+        } );
+
+        describe( "ModelAssetManager.validate — no assets", function() {
+
+            it( "reports ok=false and all files missing when the directory doesn't exist", function() {
+                var m = _make( modelPath = variables.tmpRoot & "nonexistent/" );
+                var status = m.validate();
+                expect( status.ok ).toBeFalse();
+                expect( status.missingFiles ).toHaveLength( 2 );
+                expect( status.message ).toInclude( "does not exist" );
+            } );
+
+            it( "reports ok=false when the directory exists but files are missing", function() {
+                var dir = _fixtureDir( "empty-dir", false, false );
+                var m   = _make( modelPath = dir );
+                var status = m.validate();
+                expect( status.ok ).toBeFalse();
+                expect( status.missingFiles ).toHaveLength( 2 );
+            } );
+
+            it( "reports ok=false when only the tokenizer is missing", function() {
+                var dir = _fixtureDir( "tokenizer-missing", true, false );
+                var m   = _make( modelPath = dir );
+                var status = m.validate();
+                expect( status.ok ).toBeFalse();
+                expect( status.missingFiles ).toHaveLength( 1 );
+                expect( status.missingFiles[ 1 ] ).toInclude( "tokenizer.json" );
+            } );
+
+        } );
+
+        describe( "ModelAssetManager.validate — assets present", function() {
+
+            it( "reports ok=true when both files exist and no checksums are pinned", function() {
+                var dir = _fixtureDir( "both-present" );
+                var m   = _make( modelPath = dir );
+                var status = m.validate();
+                expect( status.ok ).toBeTrue();
+                expect( status.message ).toInclude( "present" );
+            } );
+
+            it( "reports ok=true when files exist and their checksums match", function() {
+                var dir = _fixtureDir( "checksum-match" );
+                var modelSha = _computeSha256ForTest( dir & "model.onnx" );
+                var tokSha   = _computeSha256ForTest( dir & "tokenizer.json" );
+
+                var m = _make(
+                    modelPath         = dir,
+                    modelChecksum     = modelSha,
+                    tokenizerChecksum = tokSha
+                );
+                var status = m.validate();
+                expect( status.ok ).toBeTrue();
+                expect( status.message ).toInclude( "checksum-verified" );
+            } );
+
+            it( "reports ok=false with checksumIssues when a checksum mismatches", function() {
+                var dir = _fixtureDir( "checksum-mismatch" );
+                var m = _make(
+                    modelPath     = dir,
+                    modelChecksum = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                );
+                var status = m.validate();
+                expect( status.ok ).toBeFalse();
+                expect( status.checksumIssues ).toHaveLength( 1 );
+                expect( status.checksumIssues[ 1 ].file ).toInclude( "model.onnx" );
+                expect( status.checksumIssues[ 1 ].expected ).toBe( "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" );
+                expect( status.message ).toInclude( "Checksum mismatch" );
+            } );
+
+        } );
+
+        describe( "ModelAssetManager.ensureAssets — manual mode", function() {
+
+            it( "succeeds when files are present and valid", function() {
+                var dir = _fixtureDir( "manual-happy" );
+                var m   = _make( modelPath = dir, assetMode = "manual" );
+                var status = m.ensureAssets();
+                expect( status.ok ).toBeTrue();
+            } );
+
+            it( "throws a clear actionable error when files are missing", function() {
+                var dir = variables.tmpRoot & "manual-missing/";
+                directoryCreate( dir, true );
+                var m = _make( modelPath = dir, assetMode = "manual" );
+
+                try {
+                    m.ensureAssets();
+                    fail( "Expected exception did not fire" );
+                } catch ( bxAiSentinelOnnx.MissingAssets e ) {
+                    expect( e.message ).toInclude( "auto-download" );
+                    expect( e.message ).toInclude( "manual" );
+                }
+            } );
+
+        } );
+
+        describe( "ModelAssetManager.ensureAssets — auto-download safety rails", function() {
+
+            it( "refuses to download a model with no pinned checksum by default", function() {
+                var dir = variables.tmpRoot & "auto-unverified/";
+                directoryCreate( dir, true );
+
+                var m = _make(
+                    modelPath = dir,
+                    modelName = "gliner-pii-v1",     // registered but not yet verified
+                    assetMode = "auto-download"
+                );
+
+                try {
+                    m.ensureAssets();
+                    fail( "Expected UnverifiedModel exception" );
+                } catch ( bxAiSentinelOnnx.UnverifiedModel e ) {
+                    expect( e.message ).toInclude( "acceptUnverified" );
+                }
+            } );
+
+            it( "refuses to download a model with licenseStatus=unverified by default", function() {
+                var dir = variables.tmpRoot & "auto-unverifiedLicense/";
+                directoryCreate( dir, true );
+
+                var m = _make(
+                    modelPath         = dir,
+                    modelName         = "piiranha-pii-v1",   // unverified license in registry
+                    assetMode         = "auto-download",
+                    acceptUnverified  = true,
+                    modelChecksum     = "anything-nonEmpty-so-we-get-past-the-checksum-gate"
+                );
+
+                try {
+                    m.ensureAssets();
+                    fail( "Expected UnverifiedLicense exception" );
+                } catch ( bxAiSentinelOnnx.UnverifiedLicense e ) {
+                    expect( e.message ).toInclude( "acceptUnverifiedLicense" );
+                }
+            } );
+
+            it( "throws UnknownModel when modelName isn't registered and no modelSource is supplied", function() {
+                var dir = variables.tmpRoot & "auto-unknown/";
+                directoryCreate( dir, true );
+
+                var m = _make(
+                    modelPath        = dir,
+                    modelName        = "does-not-exist-in-registry",
+                    assetMode        = "auto-download",
+                    acceptUnverified = true
+                );
+
+                try {
+                    m.ensureAssets();
+                    fail( "Expected UnknownModel exception" );
+                } catch ( bxAiSentinelOnnx.UnknownModel e ) {
+                    expect( e.message ).toInclude( "not found" );
+                }
+            } );
+
+        } );
+
+        describe( "ModelAssetManager.ensureAssets — auto-download orchestration (mocked)", function() {
+
+            it( "calls _downloadFile for each missing asset and re-validates after", function() {
+                var dir = variables.tmpRoot & "auto-mock-happy/";
+                directoryCreate( dir, true );
+
+                var m = new tests.specs.fixtures.TestableAssetManager(
+                    settings = {
+                        "modelPath"               : dir,
+                        "modelName"               : "does-not-matter-we-supply-sources",
+                        "modelSource"             : "https://example.test/model.onnx",
+                        "tokenizerSource"         : "https://example.test/tokenizer.json",
+                        "assetMode"               : "auto-download",
+                        "acceptUnverified"        : true,
+                        "acceptUnverifiedLicense" : true
+                    },
+                    downloadAction = "write"
+                );
+
+                var result = m.ensureAssets();
+                expect( result.ok ).toBeTrue();
+                expect( m.getDownloadCalls() ).toBe( 2 );
+            } );
+
+            it( "throws DownloadFailed when the download itself fails", function() {
+                var dir = variables.tmpRoot & "auto-mock-fail/";
+                directoryCreate( dir, true );
+
+                var m = new tests.specs.fixtures.TestableAssetManager(
+                    settings = {
+                        "modelPath"               : dir,
+                        "modelName"               : "does-not-matter",
+                        "modelSource"             : "https://example.test/model.onnx",
+                        "tokenizerSource"         : "https://example.test/tokenizer.json",
+                        "assetMode"               : "auto-download",
+                        "acceptUnverified"        : true,
+                        "acceptUnverifiedLicense" : true
+                    },
+                    downloadAction = "fail"
+                );
+
+                try {
+                    m.ensureAssets();
+                    fail( "Expected DownloadFailed exception" );
+                } catch ( bxAiSentinelOnnx.DownloadFailed e ) {
+                    expect( e.message ).toInclude( "network failure" );
+                }
+            } );
+
+            it( "surfaces PostDownloadValidationFailed when the download no-ops silently", function() {
+                var dir = variables.tmpRoot & "auto-mock-noop/";
+                directoryCreate( dir, true );
+
+                var m = new tests.specs.fixtures.TestableAssetManager(
+                    settings = {
+                        "modelPath"               : dir,
+                        "modelName"               : "does-not-matter",
+                        "modelSource"             : "https://example.test/model.onnx",
+                        "tokenizerSource"         : "https://example.test/tokenizer.json",
+                        "assetMode"               : "auto-download",
+                        "acceptUnverified"        : true,
+                        "acceptUnverifiedLicense" : true
+                    },
+                    downloadAction = "noop"
+                );
+
+                try {
+                    m.ensureAssets();
+                    fail( "Expected PostDownloadValidationFailed exception" );
+                } catch ( bxAiSentinelOnnx.PostDownloadValidationFailed e ) {
+                    expect( e.message ).toInclude( "validation still failed" );
+                }
+            } );
+
+        } );
+
+    }
+
+    // ─── helpers ─────────────────────────────────────────────────────────
+
+    private any function _make(
+                 string  modelPath               = variables.tmpRoot & "default/",
+                 string  modelName               = "gliner-pii-v1",
+                 string  modelSource             = "",
+                 string  tokenizerSource         = "",
+                 string  modelChecksum           = "",
+                 string  tokenizerChecksum       = "",
+                 string  assetMode               = "manual",
+                 boolean acceptUnverified        = false,
+                 boolean acceptUnverifiedLicense = false
+    ) {
+        return new bxAiSentinelOnnx.models.ModelAssetManager( settings: {
+            "modelPath"               : arguments.modelPath,
+            "modelName"               : arguments.modelName,
+            "modelSource"             : arguments.modelSource,
+            "tokenizerSource"         : arguments.tokenizerSource,
+            "modelChecksum"           : arguments.modelChecksum,
+            "tokenizerChecksum"       : arguments.tokenizerChecksum,
+            "assetMode"               : arguments.assetMode,
+            "acceptUnverified"        : arguments.acceptUnverified,
+            "acceptUnverifiedLicense" : arguments.acceptUnverifiedLicense
+        } );
+    }
+
+    private string function _fixtureDir( required string name, boolean createModel = true, boolean createTokenizer = true ) {
+        var dir = variables.tmpRoot & arguments.name & "/";
+        if ( directoryExists( dir ) ) {
+            directoryDelete( dir, true );
+        }
+        directoryCreate( dir, true );
+        if ( arguments.createModel ) {
+            fileWrite( dir & "model.onnx", "fake-onnx-content-for-" & arguments.name );
+        }
+        if ( arguments.createTokenizer ) {
+            fileWrite( dir & "tokenizer.json", "{""fake"": true, ""name"": """ & arguments.name & """}" );
+        }
+        return dir;
+    }
+
+    /**
+     * Same streaming SHA-256 the manager uses — so tests can compute an
+     * expected checksum that the manager then recomputes and compares.
+     */
+    private string function _computeSha256ForTest( required string path ) {
+        var digest = createObject( "java", "java.security.MessageDigest" ).getInstance( "SHA-256" );
+        var fis    = createObject( "java", "java.io.FileInputStream" ).init( createObject( "java", "java.io.File" ).init( arguments.path ) );
+        try {
+            var byteCls = createObject( "java", "java.lang.Byte" ).TYPE;
+            var buffer  = createObject( "java", "java.lang.reflect.Array" ).newInstance( byteCls, 8192 );
+            var read    = fis.read( buffer );
+            while ( read != -1 ) {
+                digest.update( buffer, 0, read );
+                read = fis.read( buffer );
+            }
+            var bytes = digest.digest();
+            var sb    = createObject( "java", "java.lang.StringBuilder" );
+            var intCls = createObject( "java", "java.lang.Integer" );
+            for ( var i = 1; i <= arrayLen( bytes ); i++ ) {
+                var hex = intCls.toHexString( bytes[ i ] & javaCast( "int", 255 ) );
+                if ( len( hex ) == 1 ) sb.append( "0" );
+                sb.append( hex );
+            }
+            return sb.toString();
+        } finally {
+            fis.close();
+        }
+    }
+
+}

@@ -4,22 +4,23 @@
  * Satisfies the `IDetector@1.0.0` contract (see
  * `bx-AISentinel/models/detectors/CONTRACT.md`) so the sentinel's
  * external-detector plugin seam resolves and invokes this class. Duck-types
- * the contract — does NOT extend `bxAiSentinel.models.detectors.IDetector`
- * — so this module has zero build-time dependency on the sentinel.
+ * the contract — does NOT extend the sentinel's IDetector — so this module
+ * has zero build-time dependency on the sentinel.
  *
- * Runtime pipeline (Phase 3+):
- *   text → OnnxSession.tokenize → OnnxSession.runInference → EntityDecoder.decode → Hit[]
+ * Phase 4 wires the full detector stack:
+ *   - `ModelAssetManager` resolves model.onnx + tokenizer.json paths
+ *     (manual / auto-download / shared-cache).
+ *   - `SupportedModels` supplies id2label + labelToSentinel for the
+ *     configured `modelName` so host apps don't have to spell them out.
+ *   - `OnnxSession` owns the Java singletons (OrtEnvironment, OrtSession,
+ *     HuggingFaceTokenizer).
+ *   - `EntityDecoder` turns logits into Sentinel Hit structs.
  *
- * Graceful degradation: when ONNX JARs aren't placed in `lib/` or the
- * model files aren't at the configured paths, the session never reaches
- * `ready`, `scan()` returns an empty array, and bx-AISentinel's plugin seam
- * treats the detector as a no-op rather than a failure. The operator sees
- * the problem via the module's onLoad log + OnnxSession's own load-error
- * state.
- *
- * **Phase 3 status**: class-loading + inference pipeline are wired. Real
- * `ModelAssetManager`-driven paths + GLiNER PII v1 label schema land in
- * Phase 4.
+ * Graceful degradation: when assets aren't present or the session can't
+ * load, `scan()` returns `[]`. The sentinel's plugin seam treats this as a
+ * no-op rather than a failure. Diagnostics surface via `validateAssets()`,
+ * the LogBox channel `bx-aisentinel-onnx`, and the module-level load-report
+ * pattern the sentinel publishes.
  */
 class {
 
@@ -29,6 +30,7 @@ class {
     property name="settings"        type="struct";
     property name="session"         type="any";
     property name="decoder"         type="any";
+    property name="assetManager"    type="any";
     property name="id2label"        type="struct";
     property name="labelToSentinel" type="struct";
 
@@ -38,12 +40,19 @@ class {
         variables.contractVersion = "1.0.0";
         variables.settings        = arguments.settings;
 
-        // Session + decoder — either caller-supplied (for tests) or built now.
+        // Asset manager resolves model paths + validates. Caller-supplied
+        // overrides take precedence (tests inject a fixture manager).
+        variables.assetManager = arguments.settings.assetManager
+            ?: new ModelAssetManager( settings: arguments.settings );
+
+        // Session — either caller-supplied (tests + advanced hosts) or built
+        // from paths the asset manager resolves.
         variables.session = arguments.settings.session ?: new OnnxSession( config: {
-            "modelPath"     : arguments.settings.modelPath     ?: "",
-            "tokenizerPath" : arguments.settings.tokenizerPath ?: ""
+            "modelPath"     : variables.assetManager.resolveModelPath(),
+            "tokenizerPath" : variables.assetManager.resolveTokenizerPath()
         } );
 
+        // Decoder — same DI-friendly pattern as the session.
         variables.decoder = arguments.settings.decoder ?: new EntityDecoder(
             category        : "pii-ner",
             priority        : variables.priority,
@@ -51,11 +60,18 @@ class {
             confidenceFloor : arguments.settings.confidenceFloor ?: 0.5
         );
 
-        // Label mappings — Phase 4 loads these from `SupportedModels.bx`
-        // per the configured `modelName`. Phase 3 accepts caller overrides
-        // so tests can supply synthetic maps.
-        variables.id2label        = arguments.settings.id2label        ?: {};
-        variables.labelToSentinel = arguments.settings.labelToSentinel ?: _defaultLabelToSentinel();
+        // Label mapping — caller override wins; otherwise pull from
+        // SupportedModels for the configured modelName; otherwise empty
+        // (scan() will refuse to decode until it's populated).
+        var meta = _resolveModelMetadata();
+        variables.id2label        = arguments.settings.id2label        ?: ( meta.id2label        ?: {} );
+        variables.labelToSentinel = arguments.settings.labelToSentinel ?: ( meta.labelToSentinel ?: {} );
+
+        // Eager initialization — only on explicit opt-in. Default is lazy so
+        // host apps that never use Tier 1 pay no boot cost.
+        if ( arguments.settings.eagerInit ?: false ) {
+            variables.session.ensureLoaded();
+        }
 
         return this;
     }
@@ -67,14 +83,14 @@ class {
 
         if ( !variables.session.ensureLoaded() ) {
             // Session couldn't load — JARs missing, model missing, or both.
-            // Log path is in OnnxSession; just return empty so the sentinel
-            // proceeds with other detectors.
+            // OnnxSession already logged the reason. Return empty so the
+            // sentinel proceeds with its other detectors.
             return [];
         }
 
         if ( !structCount( variables.id2label ) ) {
-            // No label map yet — Phase 4 wires `SupportedModels.bx` so this
-            // populates automatically. For now, we can't decode output.
+            // No label map — model isn't in SupportedModels and caller didn't
+            // supply one. Can't decode output.
             return [];
         }
 
@@ -104,24 +120,85 @@ class {
     string  function getSourceName()      { return variables.sourceName; }
     string  function getContractVersion() { return variables.contractVersion; }
 
-    // ─── Diagnostics ─────────────────────────────────────────────────────
+    // ─── Convenience API (use this anywhere, sentinel not required) ──────
 
     /**
-     * Surface the underlying session's status for host health checks.
-     * Mirrors the `getLoadReport()` pattern on the sentinel's middleware.
+     * Extract entities from text, optionally filtered to a subset of types.
+     * Returns the same Hit structs `scan()` returns.
+     *
+     * @types Array of Sentinel labels (e.g. `[ "PII_PERSON_NAME", "PII_EMAIL" ]`).
+     *        Omit or pass empty to return everything.
+     */
+    array function extractEntities( required string text, array types = [] ) {
+        var hits = scan( arguments.text );
+        if ( !arrayLen( arguments.types ) ) return hits;
+
+        var filtered = [];
+        for ( var h in hits ) {
+            if ( arrayContains( arguments.types, h.label ) ) {
+                filtered.append( h );
+            }
+        }
+        return filtered;
+    }
+
+    /**
+     * Fast boolean — "does this text contain any PII the detector recognizes?"
+     * Short-circuits on the first hit.
+     */
+    boolean function containsPii( required string text ) {
+        return arrayLen( scan( arguments.text ) ) > 0;
+    }
+
+    /**
+     * Replace every detected entity span with a caller-supplied replacement
+     * string (default `[REDACTED]`). Walks hits right-to-left so earlier
+     * offsets stay valid. Use this when you want a plaintext-safe version
+     * of the input for logging or display — it's a lossy redaction (no
+     * tokenized round-trip like the sentinel's middleware does).
+     */
+    string function redactInline( required string text, string replacement = "[REDACTED]" ) {
+        var hits = scan( arguments.text );
+        if ( !arrayLen( hits ) ) return arguments.text;
+
+        // Right-to-left walk so substitutions don't shift later indices.
+        arraySort( hits, function( a, b ) { return b.start - a.start; } );
+
+        var out = arguments.text;
+        for ( var h in hits ) {
+            var before = h.start > 1 ? mid( out, 1, h.start - 1 ) : "";
+            var after  = h.end < len( out ) ? mid( out, h.end + 1, len( out ) - h.end ) : "";
+            out = before & arguments.replacement & after;
+        }
+        return out;
+    }
+
+    /**
+     * Surface the asset + session status for host health checks and the
+     * `download-model` task.
      */
     struct function validateAssets() {
-        return variables.session.getStatus();
+        var assetStatus   = variables.assetManager.validate();
+        var sessionStatus = variables.session.getStatus();
+        return {
+            "ok"              : assetStatus.ok && sessionStatus.loaded,
+            "assetManager"    : assetStatus,
+            "session"         : sessionStatus
+        };
+    }
+
+    /**
+     * Asset manager escape hatch for advanced hosts + the download task.
+     */
+    any function getAssetManager() {
+        return variables.assetManager;
     }
 
     // ─── internals ───────────────────────────────────────────────────────
 
     /**
-     * ONNX Runtime returns a nested Java float[][] (or similar). BoxLang's
-     * `arrayLen` + indexing work over it directly in most cases, but some
-     * engines return Object[] that needs coercion into a BoxLang array of
-     * arrays. This helper normalizes so `EntityDecoder.decode` sees a clean
-     * BoxLang 2-D array.
+     * ONNX Runtime returns nested Java arrays. Normalize into a BoxLang 2-D
+     * array so EntityDecoder sees a clean shape.
      */
     private array function _normalizeLogits( required any raw ) {
         var rows = [];
@@ -139,27 +216,18 @@ class {
     }
 
     /**
-     * Default raw-entity-type → Sentinel-label mapping covering the entity
-     * classes commonly surfaced by GLiNER-style NER models. Phase 4 replaces
-     * these defaults with model-specific maps from `SupportedModels.bx`.
+     * Pull model metadata from SupportedModels via the asset manager's own
+     * registry reference — keeps registry access in one place.
      */
-    private struct function _defaultLabelToSentinel() {
-        return {
-            "PER"                   : "PII_PERSON_NAME",
-            "PERSON"                : "PII_PERSON_NAME",
-            "LOC"                   : "PII_ADDRESS",
-            "LOCATION"              : "PII_ADDRESS",
-            "ADDRESS"               : "PII_ADDRESS",
-            "EMAIL"                 : "PII_EMAIL",
-            "PHONE"                 : "PII_PHONE",
-            "PHONE_NUMBER"          : "PII_PHONE",
-            "SSN"                   : "PII_SSN",
-            "CREDIT_CARD"           : "PII_CREDIT_CARD",
-            "DOB"                   : "PII_DOB",
-            "DATE_OF_BIRTH"         : "PII_DOB",
-            "PASSPORT_NUMBER"       : "PII_PASSPORT",
-            "MEDICAL_RECORD_NUMBER" : "PII_MEDICAL_RECORD"
-        };
+    private struct function _resolveModelMetadata() {
+        try {
+            var registry = new SupportedModels();
+            var name     = variables.settings.modelName ?: "";
+            if ( !len( name ) ) return {};
+            return registry.get( name );
+        } catch ( any e ) {
+            return {};
+        }
     }
 
 }

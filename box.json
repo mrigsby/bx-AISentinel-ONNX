@@ -1,7 +1,7 @@
 {
     "name"        : "bx-AISentinel-ONNX",
     "slug"        : "bx-aisentinel-onnx",
-    "version"     : "0.2.0-pre",
+    "version"     : "0.3.0-pre",
     "author"      : "Ortus Solutions, Corp",
     "location"    : "forgeboxStorage",
     "homepage"    : "https://github.com/mrigsby/bx-AISentinel-ONNX",
@@ -43,6 +43,7 @@
         "*.md"
     ],
     "scripts": {
-        "test": "testbox run"
+        "test"           : "testbox run",
+        "download-model" : "task run taskfile=tasks/DownloadModel"
     }
 }

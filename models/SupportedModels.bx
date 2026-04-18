@@ -1,0 +1,161 @@
+/**
+ * SupportedModels — authoritative registry of model metadata.
+ *
+ * For each known `modelName`, returns the source URL, expected SHA-256,
+ * tokenizer source + checksum, id2label map, label→Sentinel mapping, and
+ * license / provenance info. `ModelAssetManager` consumes this to download
+ * and validate; `OnnxNerDetector` consumes it to populate its decoder.
+ *
+ * **Checksum policy.** Entries shipped with empty `modelChecksum` /
+ * `tokenizerChecksum` are flagged `verified: false` — the maintainer has
+ * not yet personally downloaded + hashed the files. `ModelAssetManager`
+ * refuses to `auto-download` an unverified entry unless the operator
+ * explicitly passes `acceptUnverified: true`. Once a maintainer has
+ * downloaded + hashed a model, they edit this file to add the real
+ * SHA-256 values and flip `verified: true`, so future auto-downloads are
+ * tamper-checked.
+ *
+ * License policy.  Every entry declares a `license` and `licenseStatus`.
+ * `licenseStatus: "unverified"` marks models whose redistribution terms
+ * we haven't confirmed — `ModelAssetManager` also refuses to auto-download
+ * these unless the operator explicitly opts in. Manual mode (operator
+ * places files themselves) always works regardless of license status.
+ */
+class singleton {
+
+    property name="registry" type="struct";
+
+    function init() {
+        variables.registry = _buildRegistry();
+        return this;
+    }
+
+    /**
+     * Look up a model's full metadata by its registered name.
+     * Returns `{}` if the name isn't registered.
+     */
+    struct function get( required string modelName ) {
+        return structKeyExists( variables.registry, arguments.modelName )
+            ? duplicate( variables.registry[ arguments.modelName ] )
+            : {};
+    }
+
+    /**
+     * Does the registry know about this model?
+     */
+    boolean function has( required string modelName ) {
+        return structKeyExists( variables.registry, arguments.modelName );
+    }
+
+    /**
+     * List every registered model name. Useful for the `download-model`
+     * task's `list` subcommand.
+     */
+    array function list() {
+        return structKeyArray( variables.registry );
+    }
+
+    // ─── Registry data ───────────────────────────────────────────────────
+
+    private struct function _buildRegistry() {
+        return {
+
+            "gliner-pii-v1" : {
+                "displayName"        : "GLiNER multi-PII v1",
+                "description"        : "Zero-shot-capable NER fine-tuned on PII across 6 languages. Apache 2.0.",
+                // Placeholder URLs — maintainer verifies + pins these before flipping `verified: true`.
+                // GLiNER ONNX exports typically live under `urchade/gliner_multi_pii-v1` or the `onnx-community` org.
+                "modelSource"        : "https://huggingface.co/urchade/gliner_multi_pii-v1/resolve/main/onnx/model.onnx",
+                "tokenizerSource"    : "https://huggingface.co/urchade/gliner_multi_pii-v1/resolve/main/tokenizer.json",
+                "modelChecksum"      : "",
+                "tokenizerChecksum"  : "",
+                "verified"           : false,
+                "license"            : "Apache-2.0",
+                "licenseStatus"      : "verified",
+                "licenseUrl"         : "https://huggingface.co/urchade/gliner_multi_pii-v1",
+                "contextLength"      : 384,
+                "decoderStrategy"    : "gliner-span",
+                // Placeholder — GLiNER-PII-v1's label schema is span-based, not BIO. EntityDecoder's
+                // current BIO implementation won't decode it correctly until a GLiNER-specific adapter
+                // is added. See DEV-NOTES/discovery-log.md.
+                "id2label"           : {},
+                "labelToSentinel"    : {
+                    "person"                : "PII_PERSON_NAME",
+                    "organization"          : "PII_ORGANIZATION",
+                    "phone_number"          : "PII_PHONE",
+                    "address"               : "PII_ADDRESS",
+                    "passport_number"       : "PII_PASSPORT",
+                    "email"                 : "PII_EMAIL",
+                    "credit_card_number"    : "PII_CREDIT_CARD",
+                    "social_security_number": "PII_SSN",
+                    "health_insurance_id"   : "PII_HEALTH_INSURANCE",
+                    "date_of_birth"         : "PII_DOB",
+                    "mobile_phone_number"   : "PII_PHONE",
+                    "bank_account_number"   : "PII_BANK_ACCOUNT",
+                    "medication"            : "PII_MEDICATION",
+                    "cpf"                   : "PII_NATIONAL_ID",
+                    "driver_license_number" : "PII_DRIVERS_LICENSE",
+                    "tax_identification_number" : "PII_TAX_ID",
+                    "medical_condition"     : "PII_MEDICAL_CONDITION",
+                    "identity_card_number"  : "PII_NATIONAL_ID",
+                    "national_id"           : "PII_NATIONAL_ID",
+                    "ip_address"            : "PII_IP_ADDRESS",
+                    "iban"                  : "PII_BANK_ACCOUNT"
+                }
+            },
+
+            "piiranha-pii-v1" : {
+                "displayName"        : "Piiranha v1 (detect-personal-information)",
+                "description"        : "Fine-tuned mdeberta-v3 token classifier. 98.5% F1 on 17 PII types across 6 languages.",
+                "modelSource"        : "https://huggingface.co/onnx-community/piiranha-v1-detect-personal-information-ONNX/resolve/main/onnx/model.onnx",
+                "tokenizerSource"    : "https://huggingface.co/iiiorg/piiranha-v1-detect-personal-information/resolve/main/tokenizer.json",
+                "modelChecksum"      : "",
+                "tokenizerChecksum"  : "",
+                "verified"           : false,
+                // License on the original iiiorg repo is not publicly documented.
+                // Auto-download is gated until the maintainer verifies and updates this.
+                "license"            : "unknown",
+                "licenseStatus"      : "unverified",
+                "licenseUrl"         : "https://huggingface.co/iiiorg/piiranha-v1-detect-personal-information",
+                "contextLength"      : 256,
+                "decoderStrategy"    : "bio",
+                // Piiranha uses standard BIO token-classification output. EntityDecoder handles it
+                // directly once id2label is populated. Label schema per the model card.
+                "id2label"           : {
+                    0  : "O",
+                    1  : "B-GIVENNAME",
+                    2  : "I-GIVENNAME",
+                    3  : "B-SURNAME",
+                    4  : "I-SURNAME",
+                    5  : "B-DATEOFBIRTH",
+                    6  : "I-DATEOFBIRTH",
+                    7  : "B-TELEPHONENUM",
+                    8  : "I-TELEPHONENUM",
+                    9  : "B-EMAIL",
+                    10 : "I-EMAIL",
+                    11 : "B-SOCIALNUM",
+                    12 : "I-SOCIALNUM",
+                    13 : "B-STREET",
+                    14 : "I-STREET",
+                    15 : "B-CITY",
+                    16 : "I-CITY",
+                    17 : "B-ZIPCODE",
+                    18 : "I-ZIPCODE"
+                },
+                "labelToSentinel"    : {
+                    "GIVENNAME"    : "PII_PERSON_NAME",
+                    "SURNAME"      : "PII_PERSON_NAME",
+                    "DATEOFBIRTH"  : "PII_DOB",
+                    "TELEPHONENUM" : "PII_PHONE",
+                    "EMAIL"        : "PII_EMAIL",
+                    "SOCIALNUM"    : "PII_SSN",
+                    "STREET"       : "PII_ADDRESS",
+                    "CITY"         : "PII_ADDRESS",
+                    "ZIPCODE"      : "PII_ADDRESS"
+                }
+            }
+
+        };
+    }
+
+}

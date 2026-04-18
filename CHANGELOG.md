@@ -6,6 +6,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.3.0-pre] - 2026-04-18
+
+Model asset management + model registry + download task + convenience API. The detector is now functional end-to-end when JARs and a model are in place — first version a host app can install and exercise against real text (subject to the usual asset caveats: JARs in `lib/`, model downloaded).
+
+### Added
+
+- `models/SupportedModels.bx` — authoritative registry of model metadata. Each entry declares source URLs, pinned SHA-256 checksums (when verified), BIO/span decoder strategy, `id2label` map, `labelToSentinel` map, license, and license-verification status. Ships with entries for `gliner-pii-v1` (Apache 2.0, checksum unverified) and `piiranha-pii-v1` (license + checksum unverified).
+- `models/ModelAssetManager.bx` — resolves model / tokenizer paths, validates files on boot, and (in `auto-download` / `shared-cache` modes) fetches missing assets over HTTPS with SHA-256 verification. Safety rails refuse to auto-download unverified checksums or unverified licenses unless the operator explicitly opts in (`acceptUnverified`, `acceptUnverifiedLicense`). Checksum mismatches ALWAYS refuse the file — never silently proceeds with a wrong model. Uses streaming SHA-256 via `java.security.MessageDigest` to avoid loading multi-hundred-MB model files into heap.
+- `tasks/DownloadModel.bx` — CommandBox task invoked via `box run-script download-model`. Subcommands: `run` (default) + `list` (enumerate registry). Prints structured status; accepts `modelName`, `modelPath`, `assetMode`, `acceptUnverified`, `acceptUnverifiedLicense`, `modelSource`, and `modelChecksum` as parameters. Rethrows the underlying exception on failure so scripted callers can detect issues.
+- `box.json` gains `scripts.download-model`.
+- `OnnxNerDetector` now:
+  - Auto-constructs a `ModelAssetManager` from module settings; paths flow through it into `OnnxSession`.
+  - Auto-populates `id2label` + `labelToSentinel` from `SupportedModels` when `modelName` resolves to a registered entry.
+  - `validateAssets()` returns a richer struct aggregating asset-manager + session status.
+  - Supports `eagerInit` to load at module boot instead of on first `scan()`.
+- Convenience API on `OnnxNerDetector` (usable outside the sentinel):
+  - `extractEntities( text, types = [] )` — filter hits by Sentinel label.
+  - `containsPii( text )` — fast boolean short-circuiting on first hit.
+  - `redactInline( text, replacement = "[REDACTED]" )` — inline scrub (lossy; not reversible like the sentinel's token round-trip).
+- Tests:
+  - `tests/specs/fixtures/TestableAssetManager.bx` — `ModelAssetManager` subclass that replaces `_downloadFile` with a controllable write / fail / no-op action. Used by the auto-download orchestration specs.
+  - `tests/specs/unit/ModelAssetManagerSpec.bx` — 14 specs covering path resolution, validation (no assets / directory missing / partial / checksum match + mismatch), manual-mode ensureAssets, auto-download safety rails (unverified model, unverified license, unknown model), and auto-download orchestration (happy path, failure, post-download validation failure).
+  - `tests/specs/unit/DownloadModelTaskSpec.bx` — 4 specs covering task instantiation, `list()` enumerating the registry, `run()` happy path (assets already present), and `run()` error path (manual mode + missing files).
+  - `tests/specs/unit/OnnxNerDetectorSpec.bx` expanded — `validateAssets` new shape, SupportedModels auto-population (Piiranha end-to-end via mock session), full convenience-API coverage, label-gated `real-model` integration spec.
+
+### Changed
+
+- `OnnxNerDetector.validateAssets()` return shape changed from `{ loaded, modelPath, tokenizerPath, loadError }` (session-only) to `{ ok, assetManager: { ... }, session: { ... } }`. Host apps surfacing this struct will need to update their readers.
+- Default `assetMode` remains `"manual"` (no surprise boot-time downloads). Host apps opt into `"auto-download"` or `"shared-cache"` explicitly.
+- Module settings now include `acceptUnverified`, `acceptUnverifiedLicense`, `modelSource`, `tokenizerSource`, `modelChecksum`, `tokenizerChecksum` — all with safe defaults.
+
+### Known limitations
+
+- Registry entries ship with `verified: false` (no pinned SHA-256) because the maintainer has not personally downloaded + hashed them. Use `manual` mode or set `acceptUnverified: true` until the maintainer pins checksums.
+- `piiranha-pii-v1` ships with `licenseStatus: "unverified"`. The auto-download gate refuses it by default. Resolve with the iiiorg maintainers before flipping the status.
+- `gliner-pii-v1` uses a span-prediction output format, not BIO. The current `EntityDecoder` handles BIO correctly but would need a GLiNER-specific adapter for full entity recovery. A note captures this in `DEV-NOTES/discovery-log.md`. Piiranha's BIO output decodes correctly as-is.
+- No JAR asset manager yet. `lib/` population is still manual (three documented paths). A `JarAssetManager` mirroring `ModelAssetManager` is a candidate for a future release.
+- Integration spec `real-model` skips silently when assets aren't present. Run with JARs + model in place via `box testbox run labels=real-model` to exercise the real pipeline.
+
 ## [0.2.0-pre] - 2026-04-18
 
 Real ONNX Runtime + HuggingFace tokenizer wiring. `scan()` now drives the full tokenize → inference → decode pipeline when JARs and a model are present; degrades gracefully to empty when they aren't. Model asset management (download / validate / `SupportedModels.bx`) still lands in Phase 4.

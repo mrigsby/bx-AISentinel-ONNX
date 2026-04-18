@@ -1,0 +1,55 @@
+/**
+ * TestableAssetManager — extends ModelAssetManager and swaps `_downloadFile`
+ * for test-controlled behavior. Avoids MockBox's return-value-vs-callback
+ * quirks and keeps the spec explicit about what the "download" does.
+ *
+ * Set `downloadAction` to one of:
+ *   - `"write"` (default) — write `downloadContent` to the destination path
+ *   - `"fail"` — throw `bxAiSentinelOnnx.DownloadFailed`
+ *   - `"noop"` — return without writing (simulates a successful HTTP call
+ *                that produced no file, triggers PostDownloadValidation)
+ *
+ * `downloadCalls` is a public running count so specs can assert invocation
+ * counts without reaching into MockBox internals.
+ */
+class extends="bxAiSentinelOnnx.models.ModelAssetManager" {
+
+    property name="downloadAction"  type="string" default="write";
+    property name="downloadContent" type="string" default="downloaded-content-for-test";
+    property name="downloadCalls"   type="numeric" default="0";
+
+    function init(
+                 struct  settings        = {},
+                 any     supportedModels = "",
+                 string  downloadAction  = "write",
+                 string  downloadContent = "downloaded-content-for-test"
+    ) {
+        super.init( arguments.settings, arguments.supportedModels );
+        variables.downloadAction  = arguments.downloadAction;
+        variables.downloadContent = arguments.downloadContent;
+        variables.downloadCalls   = 0;
+        return this;
+    }
+
+    numeric function getDownloadCalls() {
+        return variables.downloadCalls;
+    }
+
+    /**
+     * Test-controlled override of the base class's `_downloadFile`. Writes /
+     * fails / no-ops per `downloadAction`.
+     */
+    private void function _downloadFile( required string url, required string destPath ) {
+        variables.downloadCalls = variables.downloadCalls + 1;
+
+        if ( variables.downloadAction == "fail" ) {
+            throw( type: "bxAiSentinelOnnx.DownloadFailed", message: "simulated network failure" );
+        }
+        if ( variables.downloadAction == "noop" ) {
+            return;
+        }
+        // Default "write" — materialize the destination file with the content.
+        fileWrite( arguments.destPath, variables.downloadContent );
+    }
+
+}

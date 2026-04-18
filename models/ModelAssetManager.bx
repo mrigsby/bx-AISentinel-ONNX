@@ -1,0 +1,353 @@
+/**
+ * ModelAssetManager — resolves, validates, and (optionally) downloads the
+ * model files the OnnxNerDetector consumes.
+ *
+ * Delivery modes (set via `assetMode` in module settings):
+ *   - "manual"        (default) — developer places files at modelPath;
+ *                                  manager validates on boot and fails fast
+ *                                  with a clear actionable error if they're
+ *                                  missing. No network call ever.
+ *   - "auto-download" — files missing at modelPath get downloaded from the
+ *                      registered source, SHA-256-verified if the registry
+ *                      has a pinned checksum, and cached. Explicit opt-in.
+ *   - "shared-cache"  — identical behavior to auto-download, but modelPath
+ *                      points outside the module directory (e.g.
+ *                      `/opt/bx-ai/models/<modelName>/` or
+ *                      `~/.bx-aisentinel/models/<modelName>/`) so weights
+ *                      survive `box install` reinstalls and are shared
+ *                      across projects on the same host.
+ *
+ * File layout at `modelPath`:
+ *   <modelPath>/model.onnx
+ *   <modelPath>/tokenizer.json
+ *
+ * Safety rails:
+ *   - Unverified models (registry `verified: false` AND no operator-supplied
+ *     `modelChecksum`) are NOT auto-downloaded unless the operator passes
+ *     `acceptUnverified: true`. Protects against shipping a tainted default.
+ *   - Unverified-license models (`licenseStatus: "unverified"`) are NOT
+ *     auto-downloaded unless the operator passes `acceptUnverifiedLicense: true`.
+ *   - Checksum mismatches ALWAYS refuse the file — never silently proceed
+ *     with a wrong model.
+ */
+class singleton {
+
+    property name="settings"        type="struct";
+    property name="supportedModels" type="any";
+
+    function init( struct settings = {}, any supportedModels = "" ) {
+        variables.settings = _applyDefaults( arguments.settings );
+        variables.supportedModels = isObject( arguments.supportedModels )
+            ? arguments.supportedModels
+            : new SupportedModels();
+        return this;
+    }
+
+    // ─── Path resolution ─────────────────────────────────────────────────
+
+    string function resolveModelPath() {
+        return _joinPath( variables.settings.modelPath, "model.onnx" );
+    }
+
+    string function resolveTokenizerPath() {
+        return _joinPath( variables.settings.modelPath, "tokenizer.json" );
+    }
+
+    string function getModelPath() { return variables.settings.modelPath; }
+    string function getModelName() { return variables.settings.modelName; }
+    string function getAssetMode() { return variables.settings.assetMode; }
+
+    // ─── Validation ──────────────────────────────────────────────────────
+
+    /**
+     * Structured health check. Never throws. Callers use this for host
+     * health endpoints, the `download-model` task, and the detector's
+     * boot-time guard.
+     *
+     * Returns:
+     *   {
+     *       ok              : boolean,
+     *       mode            : string,
+     *       modelName       : string,
+     *       modelPath       : string,
+     *       modelFile       : string,
+     *       tokenizerFile   : string,
+     *       missingFiles    : array<string>,
+     *       checksumIssues  : array<struct{ file, expected, actual }>,
+     *       registryVerified: boolean,
+     *       licenseStatus   : string,
+     *       message         : string
+     *   }
+     */
+    struct function validate() {
+        var modelFile     = resolveModelPath();
+        var tokenizerFile = resolveTokenizerPath();
+        var missing       = [];
+        var checksumIssues = [];
+
+        if ( !directoryExists( variables.settings.modelPath ) ) {
+            return _statusStruct(
+                ok      = false,
+                missing = [ modelFile, tokenizerFile ],
+                message = "modelPath directory does not exist: " & variables.settings.modelPath
+            );
+        }
+
+        if ( !fileExists( modelFile ) )     missing.append( modelFile );
+        if ( !fileExists( tokenizerFile ) ) missing.append( tokenizerFile );
+
+        if ( arrayLen( missing ) ) {
+            return _statusStruct(
+                ok      = false,
+                missing = missing,
+                message = "Missing asset file(s) at " & variables.settings.modelPath & ". See README for the three placement options."
+            );
+        }
+
+        // Files present — verify checksums if we have pinned values.
+        var meta           = _getModelMetadata();
+        var modelExpected  = len( variables.settings.modelChecksum )
+            ? variables.settings.modelChecksum
+            : ( meta.modelChecksum ?: "" );
+        var tokenizerExpected = len( variables.settings.tokenizerChecksum )
+            ? variables.settings.tokenizerChecksum
+            : ( meta.tokenizerChecksum ?: "" );
+
+        if ( len( modelExpected ) ) {
+            var actual = _computeSha256( modelFile );
+            if ( lcase( actual ) != lcase( modelExpected ) ) {
+                checksumIssues.append( { "file": modelFile, "expected": modelExpected, "actual": actual } );
+            }
+        }
+        if ( len( tokenizerExpected ) ) {
+            var actualT = _computeSha256( tokenizerFile );
+            if ( lcase( actualT ) != lcase( tokenizerExpected ) ) {
+                checksumIssues.append( { "file": tokenizerFile, "expected": tokenizerExpected, "actual": actualT } );
+            }
+        }
+
+        if ( arrayLen( checksumIssues ) ) {
+            return _statusStruct(
+                ok             = false,
+                checksumIssues = checksumIssues,
+                message        = "Checksum mismatch on " & arrayLen( checksumIssues ) & " asset file(s). Files may be corrupted or tampered. Delete and re-download."
+            );
+        }
+
+        return _statusStruct(
+            ok      = true,
+            message = "All assets present" & ( len( modelExpected ) ? " and checksum-verified." : " (checksums not pinned — verification skipped)." )
+        );
+    }
+
+    /**
+     * Idempotent "make sure the files exist" operation. In manual mode this
+     * is just validate() — assets that are missing produce a descriptive
+     * exception. In auto modes, missing assets are downloaded (subject to
+     * verification / license / unverified gates) then re-validated.
+     *
+     * Returns the final validate() struct on success, throws on any error
+     * with an actionable message.
+     */
+    struct function ensureAssets() {
+        var status = validate();
+        if ( status.ok ) return status;
+
+        // Manual mode refuses to touch the network.
+        if ( variables.settings.assetMode == "manual" ) {
+            throw(
+                type    = "bxAiSentinelOnnx.MissingAssets",
+                message = status.message & " To enable automatic download, set assetMode=""auto-download"" or ""shared-cache"" in module settings. See README."
+            );
+        }
+
+        // auto-download / shared-cache — walk the safety rails.
+        var meta = _getModelMetadata();
+        if ( !structCount( meta ) && !len( variables.settings.modelSource ) ) {
+            throw(
+                type    = "bxAiSentinelOnnx.UnknownModel",
+                message = "modelName ""#variables.settings.modelName#"" not found in SupportedModels and no modelSource override provided. Either register the model in SupportedModels.bx or pass modelSource in settings."
+            );
+        }
+
+        // Unverified checksum gate.
+        var registryVerified = ( meta.verified ?: false );
+        var hasChecksum = len( variables.settings.modelChecksum ) || len( meta.modelChecksum ?: "" );
+        if ( !hasChecksum && !variables.settings.acceptUnverified ) {
+            throw(
+                type    = "bxAiSentinelOnnx.UnverifiedModel",
+                message = "Model ""#variables.settings.modelName#"" has no pinned SHA-256 and auto-download is refused by default. Pass acceptUnverified=true in settings to override, or switch to ""manual"" mode and place the file yourself."
+            );
+        }
+
+        // Unverified license gate.
+        var licenseStatus = meta.licenseStatus ?: "unverified";
+        if ( licenseStatus == "unverified" && !variables.settings.acceptUnverifiedLicense ) {
+            throw(
+                type    = "bxAiSentinelOnnx.UnverifiedLicense",
+                message = "Model ""#variables.settings.modelName#"" has licenseStatus=""unverified"" (" & ( meta.license ?: "unknown" ) & "). Auto-download is refused by default. Pass acceptUnverifiedLicense=true in settings to override, or use a different model."
+            );
+        }
+
+        // Make the target dir.
+        if ( !directoryExists( variables.settings.modelPath ) ) {
+            directoryCreate( variables.settings.modelPath, true );
+        }
+
+        // Download missing files.
+        if ( !fileExists( resolveModelPath() ) ) {
+            var src = len( variables.settings.modelSource ) ? variables.settings.modelSource : ( meta.modelSource ?: "" );
+            if ( !len( src ) ) {
+                throw( type = "bxAiSentinelOnnx.NoSource", message = "No modelSource URL for " & variables.settings.modelName );
+            }
+            _downloadFile( src, resolveModelPath() );
+        }
+
+        if ( !fileExists( resolveTokenizerPath() ) ) {
+            var srcT = len( variables.settings.tokenizerSource ) ? variables.settings.tokenizerSource : ( meta.tokenizerSource ?: "" );
+            if ( !len( srcT ) ) {
+                throw( type = "bxAiSentinelOnnx.NoSource", message = "No tokenizerSource URL for " & variables.settings.modelName );
+            }
+            _downloadFile( srcT, resolveTokenizerPath() );
+        }
+
+        // Re-validate after download.
+        var after = validate();
+        if ( !after.ok ) {
+            throw(
+                type    = "bxAiSentinelOnnx.PostDownloadValidationFailed",
+                message = "Download completed but validation still failed: " & after.message
+            );
+        }
+        return after;
+    }
+
+    // ─── internals ───────────────────────────────────────────────────────
+
+    private struct function _applyDefaults( required struct src ) {
+        return {
+            "modelPath"               : arguments.src.modelPath               ?: "",
+            "modelName"               : arguments.src.modelName               ?: "gliner-pii-v1",
+            "modelSource"             : arguments.src.modelSource             ?: "",
+            "tokenizerSource"         : arguments.src.tokenizerSource         ?: "",
+            "modelChecksum"           : arguments.src.modelChecksum           ?: "",
+            "tokenizerChecksum"       : arguments.src.tokenizerChecksum       ?: "",
+            "assetMode"               : arguments.src.assetMode               ?: "manual",
+            "downloadTimeoutMs"       : arguments.src.downloadTimeoutMs       ?: 120000,
+            "acceptUnverified"        : arguments.src.acceptUnverified        ?: false,
+            "acceptUnverifiedLicense" : arguments.src.acceptUnverifiedLicense ?: false
+        };
+    }
+
+    private struct function _getModelMetadata() {
+        return variables.supportedModels.get( variables.settings.modelName );
+    }
+
+    private struct function _statusStruct(
+                 boolean ok             = false,
+                 array   missing        = [],
+                 array   checksumIssues = [],
+                 string  message        = ""
+    ) {
+        var meta = _getModelMetadata();
+        return {
+            "ok"               : arguments.ok,
+            "mode"             : variables.settings.assetMode,
+            "modelName"        : variables.settings.modelName,
+            "modelPath"        : variables.settings.modelPath,
+            "modelFile"        : resolveModelPath(),
+            "tokenizerFile"    : resolveTokenizerPath(),
+            "missingFiles"     : arguments.missing,
+            "checksumIssues"   : arguments.checksumIssues,
+            "registryVerified" : ( meta.verified ?: false ),
+            "licenseStatus"    : ( meta.licenseStatus ?: "unverified" ),
+            "license"          : ( meta.license ?: "unknown" ),
+            "message"          : arguments.message
+        };
+    }
+
+    private string function _joinPath( required string dir, required string file ) {
+        if ( !len( arguments.dir ) ) return arguments.file;
+        var sep = ( right( arguments.dir, 1 ) == "/" || right( arguments.dir, 1 ) == "\" ) ? "" : "/";
+        return arguments.dir & sep & arguments.file;
+    }
+
+    /**
+     * Download a single file over HTTPS to a destination path. Blocks; uses
+     * CFHTTP binary-file mode. Throws on any non-2xx response or IO error.
+     */
+    private void function _downloadFile( required string url, required string destPath ) {
+        writeLog(
+            type = "information",
+            file = "bx-aisentinel-onnx",
+            text = "Downloading " & arguments.url & " -> " & arguments.destPath
+        );
+
+        try {
+            cfhttp(
+                url         = arguments.url,
+                method      = "GET",
+                getasbinary = "yes",
+                timeout     = int( variables.settings.downloadTimeoutMs / 1000 ),
+                path        = getDirectoryFromPath( arguments.destPath ),
+                file        = getFileFromPath( arguments.destPath ),
+                result      = "local.resp"
+            );
+        } catch ( any e ) {
+            throw(
+                type    = "bxAiSentinelOnnx.DownloadFailed",
+                message = "HTTP request failed for " & arguments.url & ": " & ( e.message ?: "unknown" )
+            );
+        }
+
+        if ( !fileExists( arguments.destPath ) ) {
+            throw(
+                type    = "bxAiSentinelOnnx.DownloadFailed",
+                message = "Download of " & arguments.url & " did not produce a file at " & arguments.destPath & ". Status: " & ( local.resp.statusCode ?: "?" )
+            );
+        }
+
+        writeLog(
+            type = "information",
+            file = "bx-aisentinel-onnx",
+            text = "Downloaded " & getFileInfo( arguments.destPath ).size & " bytes to " & arguments.destPath
+        );
+    }
+
+    /**
+     * Streaming SHA-256 of a file. Avoids loading the whole file into heap
+     * (model weights can be 100–400 MB). Uses Java's MessageDigest +
+     * FileInputStream directly — no CFML `hash()` path.
+     */
+    private string function _computeSha256( required string path ) {
+        var digest = createObject( "java", "java.security.MessageDigest" ).getInstance( "SHA-256" );
+        var file   = createObject( "java", "java.io.File" ).init( arguments.path );
+        var fis    = createObject( "java", "java.io.FileInputStream" ).init( file );
+
+        try {
+            // 8 KB streaming buffer. `byte[]` allocation via reflection.
+            var byteCls = createObject( "java", "java.lang.Byte" ).TYPE;
+            var buffer  = createObject( "java", "java.lang.reflect.Array" ).newInstance( byteCls, 8192 );
+
+            var read = fis.read( buffer );
+            while ( read != -1 ) {
+                digest.update( buffer, 0, read );
+                read = fis.read( buffer );
+            }
+
+            var digestBytes = digest.digest();
+            var sb = createObject( "java", "java.lang.StringBuilder" );
+            var intCls = createObject( "java", "java.lang.Integer" );
+            for ( var i = 1; i <= arrayLen( digestBytes ); i++ ) {
+                var hex = intCls.toHexString( digestBytes[ i ] & javaCast( "int", 255 ) );
+                if ( len( hex ) == 1 ) sb.append( "0" );
+                sb.append( hex );
+            }
+            return sb.toString();
+        }
+        finally {
+            fis.close();
+        }
+    }
+
+}

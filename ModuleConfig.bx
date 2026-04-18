@@ -5,12 +5,12 @@
  * into bx-AISentinel via its externalDetectors policy setting. See README
  * and the main sentinel's models/detectors/CONTRACT.md.
  *
- * Status: v0.2.0-pre — scaffolding. Real ONNX Runtime + GLiNER wiring lands
+ * Status: v0.3.0-pre — scaffolding. Real ONNX Runtime + GLiNER wiring lands
  * in subsequent phases. Current `OnnxNerDetector.scan()` returns empty hits.
  */
 class {
 
-    property name="moduleVersion" default="0.2.0-pre";
+    property name="moduleVersion" default="0.3.0-pre";
 
     // Explicit name so the WireBox ID stays `OnnxNerDetector@bx-AISentinel-ONNX`
     // regardless of the install directory's case.
@@ -19,7 +19,7 @@ class {
     this.author         = "Ortus Solutions, Corp";
     this.webURL         = "https://github.com/mrigsby/bx-AISentinel-ONNX";
     this.description    = "ONNX Runtime + GLiNER-backed Tier 1 NER PII detector for bx-AISentinel.";
-    this.version        = "0.2.0-pre";
+    this.version        = "0.3.0-pre";
     this.cfmapping      = "bxAiSentinelOnnx";
     this.modelNamespace = "bxaisentinelonnx";
     this.autoMapModels  = true;

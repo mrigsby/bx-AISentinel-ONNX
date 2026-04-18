@@ -1,0 +1,145 @@
+/**
+ * DownloadModel — CommandBox task that pre-downloads the ONNX model +
+ * tokenizer for `bx-AISentinel-ONNX`.
+ *
+ * Invoked via:
+ *   box run-script download-model
+ *   box task run taskfile=tasks/DownloadModel [params...]
+ *
+ * Typical use cases:
+ *   - Docker image build — run this in the Dockerfile so the final image
+ *     ships with the model baked in; runtime startup doesn't pay the
+ *     download cost.
+ *   - CI warmup — cache the model between CI runs.
+ *   - Air-gapped prep — verify a manual file placement hashes correctly.
+ *   - Operator diagnostic — run against a broken install to see the exact
+ *     ModelAssetManager validate() result.
+ *
+ * Parameters (all optional, sensible defaults):
+ *   modelName              — default "gliner-pii-v1"
+ *   modelPath              — default "./assets/"  (module-local)
+ *   assetMode              — default "auto-download"
+ *   acceptUnverified       — default false (set true for models without pinned SHA-256)
+ *   acceptUnverifiedLicense — default false (set true for license-unverified models)
+ *   modelSource            — explicit URL override (otherwise from SupportedModels)
+ *   modelChecksum          — explicit SHA-256 override
+ */
+class {
+
+    // `print` comes from CommandBox at runtime via WireBox DSL injection.
+    // In TestBox specs we don't have CommandBox, so the spec sets
+    // `task.print = <capture stub>` before calling run()/list().
+    property name="print" type="any";
+
+    function init() {
+        // Default to a silent stub so calling the task outside CommandBox
+        // doesn't crash. Host / spec injects a real print object as needed.
+        if ( !structKeyExists( variables, "print" ) || !isObject( variables.print ) ) {
+            variables.print = _silentPrint();
+        }
+        return this;
+    }
+
+    function run(
+                 string  modelName              = "gliner-pii-v1",
+                 string  modelPath              = "./assets/",
+                 string  assetMode              = "auto-download",
+                 boolean acceptUnverified       = false,
+                 boolean acceptUnverifiedLicense = false,
+                 string  modelSource            = "",
+                 string  modelChecksum          = ""
+    ) {
+        print.line( "bx-AISentinel-ONNX — Download Model" );
+        print.line( "──────────────────────────────────────────────" );
+        print.line( "Model:        " & arguments.modelName );
+        print.line( "Path:         " & arguments.modelPath );
+        print.line( "Mode:         " & arguments.assetMode );
+        print.line( "" );
+
+        var manager = new bxAiSentinelOnnx.models.ModelAssetManager( settings: {
+            "modelName"               : arguments.modelName,
+            "modelPath"               : arguments.modelPath,
+            "assetMode"               : arguments.assetMode,
+            "acceptUnverified"        : arguments.acceptUnverified,
+            "acceptUnverifiedLicense" : arguments.acceptUnverifiedLicense,
+            "modelSource"             : arguments.modelSource,
+            "modelChecksum"           : arguments.modelChecksum
+        } );
+
+        // Show what we're about to do before we commit to downloading.
+        var preStatus = manager.validate();
+        if ( preStatus.ok ) {
+            print.greenLine( "✓ Assets already present and valid — nothing to download." );
+            _printStatus( preStatus );
+            return;
+        }
+
+        print.yellowLine( "Assets not yet valid: " & preStatus.message );
+        print.line( "" );
+
+        try {
+            var result = manager.ensureAssets();
+            print.greenLine( "✓ Download complete." );
+            _printStatus( result );
+        }
+        catch ( any e ) {
+            print.redLine( "✗ Download failed: " & ( e.message ?: "unknown" ) );
+            if ( len( e.detail ?: "" ) ) print.line( "  Detail: " & e.detail );
+            if ( len( e.type   ?: "" ) ) print.line( "  Type:   " & e.type );
+            print.line( "" );
+            print.line( "Troubleshooting:" );
+            print.line( "  - UnverifiedModel   : pass acceptUnverified=true (only if you trust the source)." );
+            print.line( "  - UnverifiedLicense : pass acceptUnverifiedLicense=true (or pick a different model)." );
+            print.line( "  - DownloadFailed    : check network + URL; try manual download per README." );
+            print.line( "  - UnknownModel      : run with --list to see registered model names." );
+            rethrow;
+        }
+    }
+
+    /**
+     * `box task run taskfile=tasks/DownloadModel list` — print the registry.
+     */
+    function list() {
+        var registry = new bxAiSentinelOnnx.models.SupportedModels();
+        var names    = registry.list();
+
+        print.line( "Registered models:" );
+        for ( var name in names ) {
+            var meta = registry.get( name );
+            print.line( "  " & name );
+            print.line( "    " & ( meta.displayName ?: "" ) );
+            print.line( "    verified: " & ( meta.verified ?: false ) & " · licenseStatus: " & ( meta.licenseStatus ?: "unverified" ) );
+        }
+    }
+
+    private any function _silentPrint() {
+        var noop = function( msg = "" ) {};
+        return {
+            "line"       : noop,
+            "greenLine"  : noop,
+            "yellowLine" : noop,
+            "redLine"    : noop
+        };
+    }
+
+    private function _printStatus( required struct status ) {
+        print.line( "" );
+        print.line( "  modelFile:     " & arguments.status.modelFile );
+        print.line( "  tokenizerFile: " & arguments.status.tokenizerFile );
+        print.line( "  licenseStatus: " & arguments.status.licenseStatus );
+        print.line( "  license:       " & arguments.status.license );
+        if ( arrayLen( arguments.status.missingFiles ) ) {
+            print.line( "  missing:       " & arrayToList( arguments.status.missingFiles, ", " ) );
+        }
+        if ( arrayLen( arguments.status.checksumIssues ) ) {
+            print.redLine( "  CHECKSUM ISSUES:" );
+            for ( var issue in arguments.status.checksumIssues ) {
+                print.redLine( "    " & issue.file );
+                print.redLine( "      expected " & issue.expected );
+                print.redLine( "      actual   " & issue.actual );
+            }
+        }
+        print.line( "" );
+    }
+
+}

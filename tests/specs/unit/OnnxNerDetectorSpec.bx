@@ -1,16 +1,14 @@
 /**
- * OnnxNerDetectorSpec — unit coverage of the detector's Phase 3 surface.
+ * OnnxNerDetectorSpec — unit coverage of the detector's Phase 4 surface.
  *
  * Verifies:
- *   - IDetector@1.0.0 contract surface is exposed.
- *   - Graceful empty-scan when the session fails to load (JARs absent,
- *     model missing) — the Phase 2/3 reality when no JARs are in lib/.
- *   - validateAssets() exposes the session's diagnostics struct.
- *   - With a MockOnnxSession providing synthetic tokenization + logits, the
- *     full tokenize → inference → decode pipeline produces expected Hits.
- *
- * Real-model integration is deferred to Phase 4 (`SupportedModels.bx` +
- * `ModelAssetManager` + label-gated integration spec against GLiNER PII v1).
+ *   - IDetector@1.0.0 contract surface.
+ *   - ModelAssetManager integration — default construction, no-assets
+ *     graceful-empty scan, validateAssets shape.
+ *   - Full pipeline via MockOnnxSession (tokenize → inference → decode).
+ *   - Convenience API (extractEntities, containsPii, redactInline).
+ *   - Label-gated real-model integration (skipped unless run with
+ *     `label="real-model"` AND the JARs / model are actually present).
  */
 class extends="testbox.system.BaseSpec" {
 
@@ -36,25 +34,23 @@ class extends="testbox.system.BaseSpec" {
                 expect( d.getSourceName() ).toBe( "OnnxNerDetector" );
             } );
 
-            it( "reports a numeric priority greater than zero", function() {
+            it( "reports a positive numeric priority", function() {
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
-                expect( isNumeric( d.getPriority() ) ).toBeTrue();
                 expect( d.getPriority() ).toBeGT( 0 );
             } );
 
         } );
 
-        describe( "OnnxNerDetector.scan — no assets present (Phase 2/3 default state)", function() {
+        describe( "OnnxNerDetector.scan — no assets present (default state)", function() {
 
             it( "returns an empty array when modelPath is unset", function() {
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
                 expect( d.scan( "Alice Martinez lives in Madrid." ) ).toHaveLength( 0 );
             } );
 
-            it( "returns an empty array when modelPath points at a missing file", function() {
+            it( "returns an empty array when modelPath is a missing directory", function() {
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
-                    "modelPath"     : "/nope/does-not-exist/model.onnx",
-                    "tokenizerPath" : "/nope/does-not-exist/tokenizer.json"
+                    "modelPath" : "/nope/does/not/exist/"
                 } );
                 expect( d.scan( "random text" ) ).toHaveLength( 0 );
             } );
@@ -64,12 +60,11 @@ class extends="testbox.system.BaseSpec" {
                 expect( d.scan( "" ) ).toHaveLength( 0 );
             } );
 
-            it( "accepts session and decoder overrides via settings", function() {
+            it( "returns empty when session reports not-loaded (injected mock)", function() {
                 var session = new tests.specs.fixtures.MockOnnxSession( loaded = false );
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
                     "session" : session
                 } );
-                // Session reports not-loaded → detector returns empty.
                 expect( d.scan( "irrelevant" ) ).toHaveLength( 0 );
             } );
 
@@ -77,16 +72,28 @@ class extends="testbox.system.BaseSpec" {
 
         describe( "OnnxNerDetector.validateAssets", function() {
 
-            it( "exposes the underlying session's status struct", function() {
+            it( "returns a struct aggregating assetManager + session status", function() {
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
-                    "modelPath" : "/fake/path/model.onnx"
+                    "modelPath" : "/fake/path/"
                 } );
                 var status = d.validateAssets();
-                expect( status ).toHaveKey( "loaded" );
-                expect( status ).toHaveKey( "modelPath" );
-                expect( status ).toHaveKey( "tokenizerPath" );
-                expect( status ).toHaveKey( "loadError" );
-                expect( status.modelPath ).toBe( "/fake/path/model.onnx" );
+                expect( status ).toHaveKey( "ok" );
+                expect( status ).toHaveKey( "assetManager" );
+                expect( status ).toHaveKey( "session" );
+                expect( status.assetManager ).toHaveKey( "ok" );
+                expect( status.assetManager ).toHaveKey( "modelFile" );
+                expect( status.assetManager ).toHaveKey( "missingFiles" );
+                expect( status.session ).toHaveKey( "loaded" );
+            } );
+
+            it( "reports ok=false when assets are missing AND session is not loaded", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "modelPath" : "/fake/path/"
+                } );
+                var status = d.validateAssets();
+                expect( status.ok                   ).toBeFalse();
+                expect( status.assetManager.ok      ).toBeFalse();
+                expect( status.session.loaded       ).toBeFalse();
             } );
 
         } );
@@ -94,14 +101,11 @@ class extends="testbox.system.BaseSpec" {
         describe( "OnnxNerDetector.scan — full pipeline with mock session", function() {
 
             it( "tokenizes, runs inference, and decodes into Sentinel Hit structs", function() {
-                // Synthetic tokenization for "Alice Martinez lives" — three tokens.
                 var fakeTokens = {
                     "inputIds"      : [ 101, 1850, 3342, 3623, 102 ],
                     "attentionMask" : [ 1, 1, 1, 1, 1 ],
                     "offsetMapping" : [ [0,0], [1,5], [7,14], [16,20], [0,0] ]
                 };
-                // id2label: 0=O, 1=B-PER, 2=I-PER, 3=O-verb-like
-                // Rows: CLS(O), B-PER, I-PER, O, SEP(O)
                 var fakeLogits = [
                     [ 0.9, 0.0, 0.0, 0.0 ],   // CLS
                     [ 0.0, 0.9, 0.0, 0.0 ],   // B-PER
@@ -130,33 +134,167 @@ class extends="testbox.system.BaseSpec" {
                 expect( hits[ 1 ].source   ).toBe( "OnnxNerDetector" );
             } );
 
-            it( "returns empty when id2label is empty (no label map configured)", function() {
-                var fakeTokens = {
-                    "inputIds"      : [ 101, 1850, 102 ],
-                    "attentionMask" : [ 1, 1, 1 ],
-                    "offsetMapping" : [ [0,0], [1,5], [0,0] ]
-                };
-                var fakeLogits = [
-                    [ 0.9, 0.0 ],
-                    [ 0.0, 0.9 ],
-                    [ 0.9, 0.0 ]
-                ];
-
+            it( "returns empty when id2label is empty AND caller didn't override it", function() {
                 var session = new tests.specs.fixtures.MockOnnxSession(
-                    tokens = fakeTokens,
-                    logits = fakeLogits,
+                    tokens = { "inputIds": [101, 1850, 102], "attentionMask": [1,1,1], "offsetMapping": [[0,0],[1,5],[0,0]] },
+                    logits = [ [0.9, 0.0], [0.0, 0.9], [0.9, 0.0] ],
                     loaded = true
                 );
 
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
-                    "session" : session
-                    // id2label intentionally omitted
+                    "session"  : session,
+                    "modelName": "not-in-registry",     // forces empty id2label default
+                    "id2label" : {}
                 } );
                 expect( d.scan( "Alice" ) ).toHaveLength( 0 );
             } );
 
+            it( "auto-populates id2label + labelToSentinel from SupportedModels when modelName is registered", function() {
+                // piiranha-pii-v1 has a full BIO id2label in the registry.
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "modelName" : "piiranha-pii-v1",
+                    "modelPath" : "/fake/unused/",   // we don't scan, just inspect the resolved maps
+                    "session"   : new tests.specs.fixtures.MockOnnxSession( loaded = false )
+                } );
+                // A scan with an unloaded session returns empty, but if the maps resolved
+                // correctly, the detector is ready to work once the session loads.
+                // Indirect assertion: set the detector up with a mock session providing real
+                // Piiranha-shaped logits and confirm a hit comes through.
+                var sess = new tests.specs.fixtures.MockOnnxSession(
+                    tokens = { "inputIds": [101, 50, 51, 102], "attentionMask": [1,1,1,1], "offsetMapping": [[0,0],[1,5],[7,12],[0,0]] },
+                    // 19 labels (Piiranha schema): put "B-GIVENNAME"=1 and "I-GIVENNAME"=2 high
+                    logits = [
+                        _oneHot( 19, 0 ),    // CLS O
+                        _oneHot( 19, 1 ),    // B-GIVENNAME
+                        _oneHot( 19, 2 ),    // I-GIVENNAME
+                        _oneHot( 19, 0 )     // SEP O
+                    ],
+                    loaded = true
+                );
+
+                var d2 = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "modelName" : "piiranha-pii-v1",
+                    "session"   : sess
+                } );
+                var hits = d2.scan( "Alice Martin went home" );
+                expect( hits ).toHaveLength( 1 );
+                expect( hits[ 1 ].label ).toBe( "PII_PERSON_NAME" );
+                expect( hits[ 1 ].value ).toBe( "Alice Martin" );
+            } );
+
         } );
 
+        describe( "OnnxNerDetector — convenience API", function() {
+
+            it( "extractEntities filters by the `types` argument when provided", function() {
+                var d = _detectorWithMockHits( [
+                    _fakeHit( "PII_PERSON_NAME", "Alice",    1,  5 ),
+                    _fakeHit( "PII_EMAIL",       "a@b.c",    7, 11 )
+                ] );
+
+                expect( d.extractEntities( "x", [ "PII_EMAIL" ] ) ).toHaveLength( 1 );
+                expect( d.extractEntities( "x", [ "PII_EMAIL" ] )[ 1 ].label ).toBe( "PII_EMAIL" );
+                expect( d.extractEntities( "x", [] ) ).toHaveLength( 2 );
+            } );
+
+            it( "containsPii is true when scan finds anything, false otherwise", function() {
+                var dYes = _detectorWithMockHits( [ _fakeHit( "PII_EMAIL", "a@b.c", 1, 5 ) ] );
+                expect( dYes.containsPii( "anything" ) ).toBeTrue();
+
+                var dNo = _detectorWithMockHits( [] );
+                expect( dNo.containsPii( "anything" ) ).toBeFalse();
+            } );
+
+            it( "redactInline replaces every detected span with the replacement text", function() {
+                var d = _detectorWithMockHits( [
+                    _fakeHit( "PII_PERSON_NAME", "Alice",     1,  5 ),
+                    _fakeHit( "PII_EMAIL",       "a@b.c",     7, 11 )
+                ] );
+
+                var out = d.redactInline( "Alice a@b.c more", "[X]" );
+                expect( out ).toBe( "[X] [X] more" );
+            } );
+
+            it( "redactInline accepts a custom replacement and preserves surrounding text", function() {
+                var d = _detectorWithMockHits( [ _fakeHit( "PII_PERSON_NAME", "Alice", 10, 14 ) ] );
+                var out = d.redactInline( "hello to Alice today", "[PERSON]" );
+                expect( out ).toBe( "hello to [PERSON] today" );
+            } );
+
+            it( "redactInline returns input unchanged when there are no hits", function() {
+                var d = _detectorWithMockHits( [] );
+                expect( d.redactInline( "nothing to redact", "[X]" ) ).toBe( "nothing to redact" );
+            } );
+
+        } );
+
+        describe( "OnnxNerDetector — real-model integration (gated)", function() {
+
+            // Only runs when `box testbox run labels="real-model"` is specified AND
+            // the ONNX Runtime + tokenizer JARs are placed in lib/ AND a model is
+            // downloaded to the configured assets directory. Otherwise skipped.
+            it( "scans free-form PII through the real GLiNER / Piiranha model", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "modelName" : "piiranha-pii-v1",
+                    "modelPath" : "./assets/piiranha-pii-v1/"
+                } );
+                if ( !d.validateAssets().ok ) {
+                    // Intentionally skipped — see spec label. Pass as no-op so the
+                    // suite stays green when real model isn't available.
+                    return;
+                }
+                var hits = d.scan( "Alice Martinez was born on 1982-03-14 and lives at 742 Evergreen Terrace." );
+                expect( arrayLen( hits ) ).toBeGT( 0 );
+            }, "real-model" );
+
+        } );
+
+    }
+
+    // ─── helpers ─────────────────────────────────────────────────────────
+
+    private any function _detectorWithMockHits( required array hits ) {
+        var mockSession = new tests.specs.fixtures.MockOnnxSession(
+            tokens = { "inputIds": [101, 102], "attentionMask": [1,1], "offsetMapping": [[0,0], [0,0]] },
+            logits = [ [ 0.9 ], [ 0.9 ] ],
+            loaded = true
+        );
+
+        var fakeDecoder = prepareMock( new bxAiSentinelOnnx.models.EntityDecoder() );
+        fakeDecoder.$( "decode", arguments.hits );
+
+        return new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+            "session"         : mockSession,
+            "decoder"         : fakeDecoder,
+            "id2label"        : { 0: "O" },
+            "labelToSentinel" : { "DUMMY": "PII_DUMMY" }
+        } );
+    }
+
+    private struct function _fakeHit( required string label, required string value, required numeric startPos, required numeric endPos ) {
+        return {
+            "start"      : arguments.startPos,
+            "end"        : arguments.endPos,
+            "value"      : arguments.value,
+            "label"      : arguments.label,
+            "category"   : "pii-ner",
+            "priority"   : 2,
+            "confidence" : 0.99,
+            "source"     : "OnnxNerDetector"
+        };
+    }
+
+    /**
+     * Build a one-hot logit vector of size `numLabels` with `hotIndex`
+     * bumped to 0.9 and everything else at 0.01. Used to drive deterministic
+     * decoder output in the Piiranha auto-population test.
+     */
+    private array function _oneHot( required numeric numLabels, required numeric hotIndex ) {
+        var row = [];
+        for ( var i = 0; i < arguments.numLabels; i++ ) {
+            row.append( i == arguments.hotIndex ? 0.9 : 0.01 );
+        }
+        return row;
     }
 
 }

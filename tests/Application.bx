@@ -1,0 +1,26 @@
+/**
+ * TestBox harness application for bx-AISentinel-ONNX.
+ *
+ * Maps the module root at `/bxAiSentinelOnnx` so specs can resolve classes
+ * via `new bxAiSentinelOnnx.models.OnnxNerDetector()` etc.
+ */
+class {
+
+    this.name                 = "bx-AISentinel-ONNX-tests";
+    this.sessionManagement    = false;
+    this.setClientCookies     = false;
+    this.sessionTimeout       = createTimeSpan( 0, 0, 1, 0 );
+    this.applicationTimeout   = createTimeSpan( 0, 0, 5, 0 );
+
+    // Module root (one level above tests/)
+    this.mappings[ "/bxAiSentinelOnnx" ] = expandPath( "../" );
+    this.mappings[ "/tests" ]            = expandPath( "./" );
+
+    // TestBox installed locally by `box install` into tests/testbox/
+    if ( directoryExists( expandPath( "./testbox" ) ) ) {
+        this.mappings[ "/testbox" ] = expandPath( "./testbox" );
+    } else if ( directoryExists( expandPath( "../../testbox" ) ) ) {
+        this.mappings[ "/testbox" ] = expandPath( "../../testbox" );
+    }
+
+}

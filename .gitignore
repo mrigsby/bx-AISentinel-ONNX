@@ -1,0 +1,49 @@
+# ─── Dev dependencies ────────────────────────────────────────────────────
+# TestBox is installed locally for running specs — do not commit.
+# Unscoped so it catches tests/testbox/ (CommandBox installPaths target).
+testbox/
+
+# CommandBox server runtime — covers tests/.engine/ (isolated BoxLang engine
+# home for the module test harness) and any sibling engine dirs.
+.engine/
+**/server-home/
+**/.commandbox/
+server-*.log
+.cfconfig.json
+
+# Test-runner scratch + ephemeral fixture dirs
+tests/.tmp-*/
+**/.tmp-*/
+
+# ─── Model assets — downloaded / placed at runtime, never committed ──────
+# Default modelPath per ModuleConfig.bx. Host apps that override to a
+# host-level path don't need this rule, but the module-local default is
+# wiped on reinstall anyway.
+assets/
+
+# ─── Internal development notes — never published ────────────────────────
+# Plans, investigation scratch, discovery logs. Seeded in Phase 2 with
+# DEV-NOTES/discovery-log.md for findings that apply to the eventual
+# bx-AISentinel-DJL sibling module.
+DEV-NOTES/
+
+# ─── Build output (reserved for future compile step) ─────────────────────
+dist/
+build/
+
+# ─── Logs ────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ─── OS / editor noise ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── NEVER ignore anywhere in the module ─────────────────────────────────
+# (kept as explicit negations in case someone adds a broader rule above)
+!box.json
+!ModuleConfig.bx

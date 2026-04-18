@@ -1,0 +1,60 @@
+/**
+ * bx-AISentinel-ONNX — Tier 1 NER PII detection for bx-AISentinel.
+ *
+ * Sibling ColdBox module. Implements the IDetector@1.0.0 contract and plugs
+ * into bx-AISentinel via its externalDetectors policy setting. See README
+ * and the main sentinel's models/detectors/CONTRACT.md.
+ *
+ * Status: v0.1.0-pre — scaffolding. Real ONNX Runtime + GLiNER wiring lands
+ * in subsequent phases. Current `OnnxNerDetector.scan()` returns empty hits.
+ */
+class {
+
+    property name="moduleVersion" default="0.1.0-pre";
+
+    // Explicit name so the WireBox ID stays `OnnxNerDetector@bx-AISentinel-ONNX`
+    // regardless of the install directory's case.
+    this.name           = "bx-AISentinel-ONNX";
+    this.title          = "BX AI Sentinel — ONNX NER Detector";
+    this.author         = "Ortus Solutions, Corp";
+    this.webURL         = "https://github.com/mrigsby/bx-AISentinel-ONNX";
+    this.description    = "ONNX Runtime + GLiNER-backed Tier 1 NER PII detector for bx-AISentinel.";
+    this.version        = "0.1.0-pre";
+    this.cfmapping      = "bxAiSentinelOnnx";
+    this.modelNamespace = "bxaisentinelonnx";
+    this.autoMapModels  = true;
+
+    // This module does not depend on ColdBox-loaded modules. It provides a
+    // detector that bx-AISentinel consumes via its externalDetectors plugin
+    // seam when both modules are installed side-by-side in a host app.
+    this.dependencies   = [];
+
+    /**
+     * Module settings. Consumed by `ModelAssetManager` in Phase 4. Host apps
+     * override via `boxlang.json → modules.bx-aisentinel-onnx.settings`.
+     */
+    function configure() {
+        settings = {
+            // Directory on disk holding model.onnx + tokenizer.json.
+            // Default is module-local — persists for the life of the install
+            // but is wiped on module reinstall. Override to a host-level
+            // path like "~/.bx-aisentinel/models/gliner-pii-v1/" or
+            // "/opt/bx-ai/models/gliner-pii-v1/" to survive reinstalls.
+            "modelPath"          : "./modules_app/bx-AISentinel-ONNX/assets/",
+            "modelName"          : "gliner-pii-v1",
+            "modelSource"        : "",                       // resolved from SupportedModels in Phase 4
+            "modelChecksum"      : "",                       // resolved from SupportedModels in Phase 4
+            // "manual"       : fail fast if files absent — default, no surprise I/O.
+            // "auto-download": fetch + verify on first use, write to modelPath.
+            // "shared-cache" : like auto-download, but modelPath is external.
+            "assetMode"          : "manual",
+            "eagerInit"          : false,
+            "downloadTimeoutMs"  : 120000
+        };
+    }
+
+    function onLoad() {}
+
+    function onUnload() {}
+
+}

@@ -1,0 +1,46 @@
+{
+    "name"        : "bx-AISentinel-ONNX",
+    "slug"        : "bx-aisentinel-onnx",
+    "version"     : "0.1.0-pre",
+    "author"      : "Ortus Solutions, Corp",
+    "location"    : "forgeboxStorage",
+    "homepage"    : "https://github.com/mrigsby/bx-AISentinel-ONNX",
+    "description" : "ONNX Runtime + GLiNER-backed Tier 1 NER PII detector for bx-AISentinel. Plugs into the sentinel's externalDetectors plugin seam.",
+    "type"        : "modules",
+    "directory"   : "modules_app",
+    "keywords"    : [
+        "boxlang",
+        "bx-aisentinel",
+        "ai",
+        "ner",
+        "pii",
+        "onnx",
+        "gliner",
+        "detection",
+        "security"
+    ],
+    "dependencies": {},
+    "devDependencies": {
+        "testbox": "^7.0.0"
+    },
+    "license": [
+        {
+            "type": "Apache2",
+            "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+        }
+    ],
+    "testbox": {
+        "runner": [
+            { "default": "http://localhost:8083/runner.bxm" }
+        ]
+    },
+    "ignore": [
+        "**/.*",
+        "tests",
+        "DEV-NOTES",
+        "*.md"
+    ],
+    "scripts": {
+        "test": "testbox run"
+    }
+}

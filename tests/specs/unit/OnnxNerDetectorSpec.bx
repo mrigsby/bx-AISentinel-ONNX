@@ -1,0 +1,67 @@
+/**
+ * OnnxNerDetectorSpec — smoke coverage for the Phase 2 scaffold.
+ *
+ * Verifies the detector satisfies the IDetector@1.0.0 contract surface so
+ * bx-AISentinel's external-detector plugin seam will accept it. Real entity
+ * detection lands in Phase 4; for now `scan()` returns empty and we just
+ * confirm the contract handshake works.
+ */
+class extends="testbox.system.BaseSpec" {
+
+    function run() {
+
+        describe( "OnnxNerDetector — IDetector@1.0.0 contract surface", function() {
+
+            it( "exposes the required contract methods", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                expect( d ).toHaveKey( "scan" );
+                expect( d ).toHaveKey( "getPriority" );
+                expect( d ).toHaveKey( "getSourceName" );
+                expect( d ).toHaveKey( "getContractVersion" );
+            } );
+
+            it( "declares contract version 1.0.0", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                expect( d.getContractVersion() ).toBe( "1.0.0" );
+            } );
+
+            it( "reports its source name as OnnxNerDetector", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                expect( d.getSourceName() ).toBe( "OnnxNerDetector" );
+            } );
+
+            it( "reports a numeric priority", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                expect( isNumeric( d.getPriority() ) ).toBeTrue();
+                expect( d.getPriority() ).toBeGT( 0 );
+            } );
+
+        } );
+
+        describe( "OnnxNerDetector.scan() — Phase 2 contract", function() {
+
+            it( "returns an empty array (no entity detection wired yet)", function() {
+                var d    = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                var hits = d.scan( "Alice Martinez lives at 742 Evergreen Terrace." );
+                expect( hits ).toBeArray();
+                expect( hits ).toHaveLength( 0 );
+            } );
+
+            it( "handles empty input without throwing", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                expect( d.scan( "" ) ).toHaveLength( 0 );
+            } );
+
+            it( "accepts settings via the constructor without error", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "modelPath"  : "/tmp/fake/path/",
+                    "assetMode"  : "manual"
+                } );
+                expect( d.scan( "irrelevant" ) ).toHaveLength( 0 );
+            } );
+
+        } );
+
+    }
+
+}

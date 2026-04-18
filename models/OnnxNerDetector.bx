@@ -1,0 +1,56 @@
+/**
+ * OnnxNerDetector — Tier 1 NER PII detector for bx-AISentinel.
+ *
+ * Satisfies the `IDetector@1.0.0` contract (see `bx-AISentinel/models/detectors/CONTRACT.md`)
+ * so the sentinel's external-detector plugin seam resolves and invokes this
+ * class. Duck-types the contract — does NOT extend `bxAiSentinel.models.detectors.IDetector`
+ * — so this module has zero build-time dependency on the sentinel. Host apps
+ * install both modules side-by-side and the sentinel resolves this one at
+ * load time via WireBox.
+ *
+ * **Status: v0.1.0-pre — scaffolding.**
+ * `scan()` always returns an empty array. Real ONNX session wiring lands in
+ * Phase 3; real GLiNER-backed entity decoding + `ModelAssetManager` land in
+ * Phase 4.
+ *
+ * Public convenience API (`extractEntities`, `containsPii`, `redactInline`,
+ * `validateAssets`) is also scaffolded in subsequent phases.
+ */
+class {
+
+    property name="priority"        type="numeric" default="2";
+    property name="sourceName"      type="string"  default="OnnxNerDetector";
+    property name="contractVersion" type="string"  default="1.0.0";
+    property name="settings"        type="struct";
+
+    function init( struct settings = {} ) {
+        variables.priority        = 2;
+        variables.sourceName      = "OnnxNerDetector";
+        variables.contractVersion = "1.0.0";
+        variables.settings        = arguments.settings;
+        return this;
+    }
+
+    // ─── IDetector@1.0.0 contract surface ────────────────────────────────
+
+    /**
+     * Scan the text and return an array of Hit structs. Phase 2 returns
+     * empty; Phase 3 wires ONNX; Phase 4 wires GLiNER + entity decoding.
+     */
+    array function scan( required string text ) {
+        return [];
+    }
+
+    numeric function getPriority() {
+        return variables.priority;
+    }
+
+    string function getSourceName() {
+        return variables.sourceName;
+    }
+
+    string function getContractVersion() {
+        return variables.contractVersion;
+    }
+
+}

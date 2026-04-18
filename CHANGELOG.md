@@ -6,6 +6,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.3.1-pre] - 2026-04-18
+
+Rolled back the `download-model` CommandBox task introduced in 0.3.0-pre — see rationale below.
+
+### Removed
+
+- `tasks/DownloadModel.bx` — CommandBox's CLI engine is Lucee, so the task needed to be a `.cfc`. Worse, even as a `.cfc` it couldn't call back into `ModelAssetManager` (which is a `.bx` file) because CommandBox's Lucee can't load BoxLang class files. Duplicating the download + checksum logic inline would have meant two code paths drifting apart over time.
+- `scripts.download-model` from `box.json`.
+- `tests/specs/unit/DownloadModelTaskSpec.bx`.
+
+### Changed
+
+- `README.md`: the "Place the model" section now documents `curl` as the primary install path (already the pattern used for JARs). The `assetMode: "auto-download"` flow remains fully functional for users who want the detector to fetch the files on first `scan()` — that path is unchanged and doesn't depend on a CommandBox task.
+- "Supported models" section points directly at [`models/SupportedModels.bx`](models/SupportedModels.bx) instead of recommending a task-based listing.
+
+### Rationale
+
+The task was a "nice to have" for Docker image builds / CI warmup, but every use case it covered is already served by either `curl` (for explicit control) or the existing `assetMode: "auto-download"` flow (for hands-off first-run). Keeping a broken task in the tree while we wait for a concrete user was costing more than the feature's value. If demand materializes, a future release can reintroduce it as a self-contained `.cfc` that duplicates only what's strictly necessary.
+
 ## [0.3.0-pre] - 2026-04-18
 
 Model asset management + model registry + download task + convenience API. The detector is now functional end-to-end when JARs and a model are in place — first version a host app can install and exercise against real text (subject to the usual asset caveats: JARs in `lib/`, model downloaded).

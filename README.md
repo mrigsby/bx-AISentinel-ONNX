@@ -2,7 +2,7 @@
 
 > Tier 1 NER-based PII detection for [bx-AISentinel](https://github.com/mrigsby/bx-AISentinel). Plugs into the sentinel's external-detector plugin seam and catches free-form PII that regex / entropy / registry miss.
 
-**Status:** v0.3.0-pre · functional with real assets · [Changelog](CHANGELOG.md)
+**Status:** v0.3.1-pre · functional with real assets · [Changelog](CHANGELOG.md)
 
 ## What this is
 
@@ -50,14 +50,18 @@ The default model is [GLiNER PII v1](https://huggingface.co/urchade/gliner_multi
 - **`auto-download`** — module fetches missing files on first use from the registered source URL, verifies SHA-256 against a pinned value, and caches them. Explicit opt-in — no surprise network I/O at startup.
 - **`shared-cache`** — same as auto-download, but `modelPath` points OUTSIDE the module directory (e.g. `~/.bx-aisentinel/models/gliner-pii-v1/` or `/opt/bx-ai/models/gliner-pii-v1/`), so weights survive `box install` reinstalls and multiple CommandBox projects on the same host share one copy.
 
-Or use the included CommandBox task:
+Or download the model directly from HuggingFace with `curl` (the default `modelPath` is `./modules_app/bx-AISentinel-ONNX/assets/`):
 
 ```sh
 cd modules_app/bx-AISentinel-ONNX/
-box run-script download-model
-box run-script download-model modelName=gliner-pii-v1 assetMode=auto-download
-box task run taskfile=tasks/DownloadModel list       # enumerate registered models
+mkdir -p assets
+curl -L -o assets/model.onnx \
+  https://huggingface.co/urchade/gliner_multi_pii-v1/resolve/main/onnx/model.onnx
+curl -L -o assets/tokenizer.json \
+  https://huggingface.co/urchade/gliner_multi_pii-v1/resolve/main/tokenizer.json
 ```
+
+Or set `assetMode: "auto-download"` + `acceptUnverified: true` in module settings and let the detector fetch the files on its first `scan()` call.
 
 > ⚠️ **Default `modelPath` is module-local** (`./modules_app/bx-AISentinel-ONNX/assets/`). A CommandBox reinstall of the module wipes the weights and forces a re-download (or re-place in manual mode). For production, override `modelPath` to a host-level directory like `~/.bx-aisentinel/models/gliner-pii-v1/` or `/opt/bx-ai/models/gliner-pii-v1/` so weights persist across updates.
 
@@ -125,13 +129,7 @@ Defaults live in [`ModuleConfig.bx`](ModuleConfig.bx). Override via the host app
 
 ## Supported models
 
-Run the task to list them:
-
-```sh
-box task run taskfile=tasks/DownloadModel list
-```
-
-Current registry:
+The authoritative registry lives in [`models/SupportedModels.bx`](models/SupportedModels.bx) — inspect it directly for the full list of registered models and their metadata. Current entries:
 
 | `modelName` | Description | License | Decoder | Status |
 | --- | --- | --- | --- | --- |

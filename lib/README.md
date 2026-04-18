@@ -9,30 +9,38 @@ This directory holds the Java libraries the module loads via [cbjavaloader](http
 | `onnxruntime-<version>.jar` | [Maven — com.microsoft.onnxruntime:onnxruntime](https://mvnrepository.com/artifact/com.microsoft.onnxruntime/onnxruntime) | ONNX Runtime Java binding. Single monolithic JAR bundles native libs for linux-x64, macos-arm64, macos-x64, windows-x64; the JVM extracts the right one at first use. |
 | `tokenizers-<version>.jar` | [Maven — ai.djl.huggingface:tokenizers](https://mvnrepository.com/artifact/ai.djl.huggingface/tokenizers) | DJL's HuggingFace tokenizer wrapper. Also a single JAR with bundled native binaries. |
 
-**Current pinned versions** (tracked in `models/SupportedModels.bx` once Phase 4 lands):
+**Known-working versions** (current as of publication):
 
-- `onnxruntime`: **1.24.0** or newer (required for the macOS Apple Silicon native-lib-loader fix).
-- `tokenizers`: **0.33.0** or newer.
+- `onnxruntime`: **1.22.0** (latest stable non-android release). Newer releases should work; if you hit a macOS Apple Silicon native-lib-loader issue on an older release, bump to the latest.
+- `tokenizers`: **0.36.0**.
+
+Pick the current release on Maven Central — the links in the table above go to the version listings. If a newer version exists by the time you read this, use it.
 
 ## How to place them
 
-### Option 1 — CommandBox Maven install (recommended)
+### Option 1 — direct download from Maven Central (recommended)
 
 From the module's root directory:
 
 ```sh
-box install jar:com.microsoft.onnxruntime:onnxruntime:1.24.0 --installPath=lib
-box install jar:ai.djl.huggingface:tokenizers:0.33.0 --installPath=lib
+mkdir -p lib
+curl -L -o lib/onnxruntime-1.22.0.jar \
+  https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime/1.22.0/onnxruntime-1.22.0.jar
+curl -L -o lib/tokenizers-0.36.0.jar \
+  https://repo1.maven.org/maven2/ai/djl/huggingface/tokenizers/0.36.0/tokenizers-0.36.0.jar
 ```
 
-### Option 2 — manual download
+Swap the version numbers for whatever the current Maven Central releases are when you run this.
 
-1. Download the JARs from Maven Central (links in the table above).
-2. Drop them into this directory.
+### Option 2 — manual browser download
+
+1. Visit the Maven pages linked in the table above.
+2. Click the version you want; download the `.jar` artifact.
+3. Drop it into this directory.
 
 ### Option 3 — from a shared system location
 
-If several projects on the same host need these libs, place them in a shared directory (`/opt/bx-ai/lib/`, `~/.bx-aisentinel/lib/`, etc.) and override the module's lib-path setting in `boxlang.json → modules.bx-aisentinel-onnx.settings.libPath`. Phase 4 formalizes this via `JarAssetManager` — for now, the default is this module-local directory.
+If several projects on the same host need these libs, place them in a shared directory (`/opt/bx-ai/lib/`, `~/.bx-aisentinel/lib/`, etc.) and point `ModuleConfig.onLoad()`'s loader at that path instead. A future `JarAssetManager` (parallel to `ModelAssetManager`) can automate this; for now, the default is this module-local directory.
 
 ## Verifying the install
 

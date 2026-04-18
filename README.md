@@ -25,12 +25,15 @@ CommandBox installs into `modules_app/bx-AISentinel-ONNX/`. The module declares 
 The module does NOT bundle the ONNX Runtime / tokenizer JARs (they're 30–50 MB each and platform-complex). Place them in the module's `lib/` directory. Three documented paths:
 
 ```sh
-# Option 1 — CommandBox Maven install (recommended)
+# Option 1 — direct download from Maven Central (recommended)
 cd modules_app/bx-AISentinel-ONNX/
-box install jar:com.microsoft.onnxruntime:onnxruntime:1.24.0 --installPath=lib
-box install jar:ai.djl.huggingface:tokenizers:0.33.0         --installPath=lib
+mkdir -p lib
+curl -L -o lib/onnxruntime-1.22.0.jar \
+  https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime/1.22.0/onnxruntime-1.22.0.jar
+curl -L -o lib/tokenizers-0.36.0.jar \
+  https://repo1.maven.org/maven2/ai/djl/huggingface/tokenizers/0.36.0/tokenizers-0.36.0.jar
 
-# Option 2 — manual download from Maven Central
+# Option 2 — manual browser download from Maven Central
 # Drop onnxruntime-*.jar + tokenizers-*.jar into lib/ by hand.
 
 # Option 3 — shared system location

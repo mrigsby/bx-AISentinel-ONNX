@@ -2,7 +2,7 @@
 
 > Tier 1 NER-based PII detection for [bx-AISentinel](https://github.com/mrigsby/bx-AISentinel). Plugs into the sentinel's external-detector plugin seam and catches free-form PII that regex / entropy / registry miss.
 
-**Status:** v0.3.1-pre · functional with real assets · [Changelog](CHANGELOG.md)
+**Status:** v0.3.2-pre · functional with real assets · [Changelog](CHANGELOG.md)
 
 ## What this is
 
@@ -56,9 +56,9 @@ Or download the model directly from HuggingFace with `curl` (the default `modelP
 cd modules_app/bx-AISentinel-ONNX/
 mkdir -p assets
 curl -L -o assets/model.onnx \
-  https://huggingface.co/urchade/gliner_multi_pii-v1/resolve/main/onnx/model.onnx
+  https://huggingface.co/onnx-community/gliner_multi_pii-v1/resolve/main/onnx/model.onnx
 curl -L -o assets/tokenizer.json \
-  https://huggingface.co/urchade/gliner_multi_pii-v1/resolve/main/tokenizer.json
+  https://huggingface.co/onnx-community/gliner_multi_pii-v1/resolve/main/tokenizer.json
 ```
 
 Or set `assetMode: "auto-download"` + `acceptUnverified: true` in module settings and let the detector fetch the files on its first `scan()` call.

@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.3.2-pre] - 2026-04-18
+
+### Fixed
+
+- **Model download URLs** in `SupportedModels.bx` and the README pointed at `urchade/gliner_multi_pii-v1`, which ships only PyTorch weights (no `onnx/model.onnx`, no `tokenizer.json`). HuggingFace returned `Entry not found` on every curl attempt. Fixed: URLs now point at `onnx-community/gliner_multi_pii-v1` which hosts the actual ONNX export (fp32, fp16, int8, q4, and several other quantized variants) plus the tokenizer. License + model-card links still reference the original author's repo (provenance unchanged).
+
 ## [0.3.1-pre] - 2026-04-18
 
 Rolled back the `download-model` CommandBox task introduced in 0.3.0-pre — see rationale below.

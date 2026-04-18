@@ -63,10 +63,12 @@ class singleton {
             "gliner-pii-v1" : {
                 "displayName"        : "GLiNER multi-PII v1",
                 "description"        : "Zero-shot-capable NER fine-tuned on PII across 6 languages. Apache 2.0.",
-                // Placeholder URLs — maintainer verifies + pins these before flipping `verified: true`.
-                // GLiNER ONNX exports typically live under `urchade/gliner_multi_pii-v1` or the `onnx-community` org.
-                "modelSource"        : "https://huggingface.co/urchade/gliner_multi_pii-v1/resolve/main/onnx/model.onnx",
-                "tokenizerSource"    : "https://huggingface.co/urchade/gliner_multi_pii-v1/resolve/main/tokenizer.json",
+                // ONNX export lives under onnx-community, not the original author's repo.
+                // `urchade/gliner_multi_pii-v1` ships only pytorch_model.bin and has no
+                // onnx/ subdirectory or tokenizer.json. Maintainer needs to verify + pin
+                // SHA-256 checksums before flipping `verified: true`.
+                "modelSource"        : "https://huggingface.co/onnx-community/gliner_multi_pii-v1/resolve/main/onnx/model.onnx",
+                "tokenizerSource"    : "https://huggingface.co/onnx-community/gliner_multi_pii-v1/resolve/main/tokenizer.json",
                 "modelChecksum"      : "",
                 "tokenizerChecksum"  : "",
                 "verified"           : false,

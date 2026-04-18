@@ -1,7 +1,7 @@
 {
     "name"        : "bx-AISentinel-ONNX",
     "slug"        : "bx-aisentinel-onnx",
-    "version"     : "0.1.0-pre",
+    "version"     : "0.2.0-pre",
     "author"      : "Ortus Solutions, Corp",
     "location"    : "forgeboxStorage",
     "homepage"    : "https://github.com/mrigsby/bx-AISentinel-ONNX",
@@ -19,7 +19,9 @@
         "detection",
         "security"
     ],
-    "dependencies": {},
+    "dependencies": {
+        "cbjavaloader": "^3.0.0"
+    },
     "devDependencies": {
         "testbox": "^7.0.0"
     },

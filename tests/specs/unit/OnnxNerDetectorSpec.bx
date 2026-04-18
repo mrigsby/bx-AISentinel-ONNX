@@ -1,10 +1,16 @@
 /**
- * OnnxNerDetectorSpec — smoke coverage for the Phase 2 scaffold.
+ * OnnxNerDetectorSpec — unit coverage of the detector's Phase 3 surface.
  *
- * Verifies the detector satisfies the IDetector@1.0.0 contract surface so
- * bx-AISentinel's external-detector plugin seam will accept it. Real entity
- * detection lands in Phase 4; for now `scan()` returns empty and we just
- * confirm the contract handshake works.
+ * Verifies:
+ *   - IDetector@1.0.0 contract surface is exposed.
+ *   - Graceful empty-scan when the session fails to load (JARs absent,
+ *     model missing) — the Phase 2/3 reality when no JARs are in lib/.
+ *   - validateAssets() exposes the session's diagnostics struct.
+ *   - With a MockOnnxSession providing synthetic tokenization + logits, the
+ *     full tokenize → inference → decode pipeline produces expected Hits.
+ *
+ * Real-model integration is deferred to Phase 4 (`SupportedModels.bx` +
+ * `ModelAssetManager` + label-gated integration spec against GLiNER PII v1).
  */
 class extends="testbox.system.BaseSpec" {
 
@@ -30,7 +36,7 @@ class extends="testbox.system.BaseSpec" {
                 expect( d.getSourceName() ).toBe( "OnnxNerDetector" );
             } );
 
-            it( "reports a numeric priority", function() {
+            it( "reports a numeric priority greater than zero", function() {
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
                 expect( isNumeric( d.getPriority() ) ).toBeTrue();
                 expect( d.getPriority() ).toBeGT( 0 );
@@ -38,13 +44,19 @@ class extends="testbox.system.BaseSpec" {
 
         } );
 
-        describe( "OnnxNerDetector.scan() — Phase 2 contract", function() {
+        describe( "OnnxNerDetector.scan — no assets present (Phase 2/3 default state)", function() {
 
-            it( "returns an empty array (no entity detection wired yet)", function() {
-                var d    = new bxAiSentinelOnnx.models.OnnxNerDetector();
-                var hits = d.scan( "Alice Martinez lives at 742 Evergreen Terrace." );
-                expect( hits ).toBeArray();
-                expect( hits ).toHaveLength( 0 );
+            it( "returns an empty array when modelPath is unset", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                expect( d.scan( "Alice Martinez lives in Madrid." ) ).toHaveLength( 0 );
+            } );
+
+            it( "returns an empty array when modelPath points at a missing file", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "modelPath"     : "/nope/does-not-exist/model.onnx",
+                    "tokenizerPath" : "/nope/does-not-exist/tokenizer.json"
+                } );
+                expect( d.scan( "random text" ) ).toHaveLength( 0 );
             } );
 
             it( "handles empty input without throwing", function() {
@@ -52,12 +64,95 @@ class extends="testbox.system.BaseSpec" {
                 expect( d.scan( "" ) ).toHaveLength( 0 );
             } );
 
-            it( "accepts settings via the constructor without error", function() {
+            it( "accepts session and decoder overrides via settings", function() {
+                var session = new tests.specs.fixtures.MockOnnxSession( loaded = false );
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
-                    "modelPath"  : "/tmp/fake/path/",
-                    "assetMode"  : "manual"
+                    "session" : session
                 } );
+                // Session reports not-loaded → detector returns empty.
                 expect( d.scan( "irrelevant" ) ).toHaveLength( 0 );
+            } );
+
+        } );
+
+        describe( "OnnxNerDetector.validateAssets", function() {
+
+            it( "exposes the underlying session's status struct", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "modelPath" : "/fake/path/model.onnx"
+                } );
+                var status = d.validateAssets();
+                expect( status ).toHaveKey( "loaded" );
+                expect( status ).toHaveKey( "modelPath" );
+                expect( status ).toHaveKey( "tokenizerPath" );
+                expect( status ).toHaveKey( "loadError" );
+                expect( status.modelPath ).toBe( "/fake/path/model.onnx" );
+            } );
+
+        } );
+
+        describe( "OnnxNerDetector.scan — full pipeline with mock session", function() {
+
+            it( "tokenizes, runs inference, and decodes into Sentinel Hit structs", function() {
+                // Synthetic tokenization for "Alice Martinez lives" — three tokens.
+                var fakeTokens = {
+                    "inputIds"      : [ 101, 1850, 3342, 3623, 102 ],
+                    "attentionMask" : [ 1, 1, 1, 1, 1 ],
+                    "offsetMapping" : [ [0,0], [1,5], [7,14], [16,20], [0,0] ]
+                };
+                // id2label: 0=O, 1=B-PER, 2=I-PER, 3=O-verb-like
+                // Rows: CLS(O), B-PER, I-PER, O, SEP(O)
+                var fakeLogits = [
+                    [ 0.9, 0.0, 0.0, 0.0 ],   // CLS
+                    [ 0.0, 0.9, 0.0, 0.0 ],   // B-PER
+                    [ 0.0, 0.0, 0.9, 0.0 ],   // I-PER
+                    [ 0.9, 0.0, 0.0, 0.0 ],   // O "lives"
+                    [ 0.9, 0.0, 0.0, 0.0 ]    // SEP
+                ];
+
+                var session = new tests.specs.fixtures.MockOnnxSession(
+                    tokens = fakeTokens,
+                    logits = fakeLogits,
+                    loaded = true
+                );
+
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "session"  : session,
+                    "id2label" : { 0: "O", 1: "B-PER", 2: "I-PER", 3: "O" },
+                    "labelToSentinel" : { "PER": "PII_PERSON_NAME" }
+                } );
+
+                var hits = d.scan( "Alice Martinez lives" );
+                expect( hits ).toHaveLength( 1 );
+                expect( hits[ 1 ].label ).toBe( "PII_PERSON_NAME" );
+                expect( hits[ 1 ].value ).toBe( "Alice Martinez" );
+                expect( hits[ 1 ].category ).toBe( "pii-ner" );
+                expect( hits[ 1 ].source   ).toBe( "OnnxNerDetector" );
+            } );
+
+            it( "returns empty when id2label is empty (no label map configured)", function() {
+                var fakeTokens = {
+                    "inputIds"      : [ 101, 1850, 102 ],
+                    "attentionMask" : [ 1, 1, 1 ],
+                    "offsetMapping" : [ [0,0], [1,5], [0,0] ]
+                };
+                var fakeLogits = [
+                    [ 0.9, 0.0 ],
+                    [ 0.0, 0.9 ],
+                    [ 0.9, 0.0 ]
+                ];
+
+                var session = new tests.specs.fixtures.MockOnnxSession(
+                    tokens = fakeTokens,
+                    logits = fakeLogits,
+                    loaded = true
+                );
+
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "session" : session
+                    // id2label intentionally omitted
+                } );
+                expect( d.scan( "Alice" ) ).toHaveLength( 0 );
             } );
 
         } );

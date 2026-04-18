@@ -1,0 +1,46 @@
+/**
+ * MockOnnxSession — stands in for `OnnxSession` in OnnxNerDetector specs
+ * so we can exercise the full scan() pipeline without JARs, ONNX Runtime,
+ * or a real model on disk.
+ *
+ * Construct with the tokenization + logits the test wants to feed, and
+ * OnnxNerDetector will produce decoded Hit structs from those.
+ */
+class {
+
+    property name="tokens" type="struct";
+    property name="logits" type="array";
+    property name="loaded" type="boolean" default="true";
+
+    function init(
+                 struct  tokens = { "inputIds": [], "attentionMask": [], "offsetMapping": [] },
+                 array   logits = [],
+                 boolean loaded = true
+    ) {
+        variables.tokens = arguments.tokens;
+        variables.logits = arguments.logits;
+        variables.loaded = arguments.loaded;
+        return this;
+    }
+
+    boolean function isReady()       { return variables.loaded; }
+    boolean function ensureLoaded()  { return variables.loaded; }
+
+    struct function tokenize( required string text ) {
+        return variables.tokens;
+    }
+
+    array function runInference( required array inputIds, required array attentionMask ) {
+        return variables.logits;
+    }
+
+    struct function getStatus() {
+        return {
+            "loaded"        : variables.loaded,
+            "modelPath"     : "(mock)",
+            "tokenizerPath" : "(mock)",
+            "loadError"     : ""
+        };
+    }
+
+}

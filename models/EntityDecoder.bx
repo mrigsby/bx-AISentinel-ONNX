@@ -1,0 +1,213 @@
+/**
+ * EntityDecoder — turns ONNX token-classification output into Sentinel Hit
+ * structs. Pure BoxLang, no Java interop, no ONNX dependency — which means
+ * it's trivially unit-testable with synthetic logits.
+ *
+ * Input shape (from `OnnxSession.runInference` + `tokenize`):
+ *   - logits        : 2-D numeric array [seqLen, numLabels]
+ *   - offsetMapping : array of [start, end] char spans per token (1-based,
+ *                     inclusive). Aligned with `logits` along seqLen.
+ *   - sourceText    : original string the tokenizer consumed — used to
+ *                     slice out the actual plaintext per hit.
+ *
+ * Decoding strategy (default BIO tagging):
+ *   - argmax per token → label id.
+ *   - `B-LABEL` opens a span; subsequent `I-LABEL` with the same LABEL
+ *     extend it. `O` and any other LABEL close it.
+ *   - Sub-word prefix tokens (attention mask 0 or offset [0,0]) are
+ *     skipped — they don't correspond to real characters in the source.
+ *
+ * Label mapping:
+ *   - `id2label` (required) — model-specific index → raw label (e.g.
+ *     `{ 0: "O", 1: "B-PER", 2: "I-PER", ... }`).
+ *   - `labelToSentinel` (required) — raw-entity-type → Sentinel label
+ *     (e.g. `{ PER: "PII_PERSON_NAME", LOC: "PII_ADDRESS", ... }`). Entries
+ *     not in this map are dropped.
+ *
+ * The decoder intentionally does NOT know about GLiNER's span-based output
+ * format. When Phase 4 wires the real GLiNER model, a small adapter inside
+ * `OnnxNerDetector.scan()` normalizes GLiNER output to the BIO shape this
+ * decoder expects, or we add a `strategy` parameter and a `decodeSpan`
+ * method. Keeping the decoder strategy-agnostic for now.
+ */
+class {
+
+    property name="category"        type="string"  default="pii-ner";
+    property name="priority"        type="numeric" default="2";
+    property name="sourceName"      type="string"  default="OnnxNerDetector";
+    property name="confidenceFloor" type="numeric" default="0.5";
+
+    function init(
+                 string  category        = "pii-ner",
+                 numeric priority        = 2,
+                 string  sourceName      = "OnnxNerDetector",
+                 numeric confidenceFloor = 0.5
+    ) {
+        variables.category        = arguments.category;
+        variables.priority        = arguments.priority;
+        variables.sourceName      = arguments.sourceName;
+        variables.confidenceFloor = arguments.confidenceFloor;
+        return this;
+    }
+
+    /**
+     * Decode one inference result into an array of Hit structs.
+     *
+     * @logits          numeric[seqLen][numLabels]
+     * @offsetMapping   [[start, end], ...] — one pair per token, 1-based inclusive
+     * @sourceText      original string (for value slicing)
+     * @id2label        { numeric id: string rawLabel }
+     * @labelToSentinel { string rawEntityType: string sentinelLabel }
+     */
+    array function decode(
+        required array  logits,
+        required array  offsetMapping,
+        required string sourceText,
+        required struct id2label,
+        required struct labelToSentinel
+    ) {
+        var hits        = [];
+        var openLabel   = "";        // e.g. "PER" while inside a B-PER … I-PER span
+        var openStart   = 0;
+        var openEnd     = 0;
+        var openSumConf = 0.0;
+        var openCount   = 0;
+
+        for ( var i = 1; i <= arrayLen( arguments.logits ); i++ ) {
+            var offset = i <= arrayLen( arguments.offsetMapping )
+                ? arguments.offsetMapping[ i ]
+                : [ 0, 0 ];
+
+            // Skip special tokens (CLS, SEP) and sub-word continuations where
+            // the tokenizer recorded no character span.
+            if ( offset[ 1 ] == 0 && offset[ 2 ] == 0 ) {
+                if ( len( openLabel ) ) {
+                    hits.append( _flushHit( openLabel, openStart, openEnd, openSumConf, openCount, arguments.sourceText, arguments.labelToSentinel ) );
+                    openLabel = "";
+                }
+                continue;
+            }
+
+            var row      = arguments.logits[ i ];
+            var best     = _argmax( row );
+            var labelId  = best.index;
+            var confidence = best.confidence;
+            var rawLabel = arguments.id2label.keyExists( labelId ) ? arguments.id2label[ labelId ] : "O";
+
+            var tagInfo = _parseBioTag( rawLabel );
+            var bio     = tagInfo.bio;       // "B", "I", or "O"
+            var entity  = tagInfo.entity;    // e.g. "PER" — "" for O
+
+            // B-LABEL starts a new span (closing any open one first).
+            if ( bio == "B" ) {
+                if ( len( openLabel ) ) {
+                    hits.append( _flushHit( openLabel, openStart, openEnd, openSumConf, openCount, arguments.sourceText, arguments.labelToSentinel ) );
+                }
+                openLabel   = entity;
+                openStart   = offset[ 1 ];
+                openEnd     = offset[ 2 ];
+                openSumConf = confidence;
+                openCount   = 1;
+                continue;
+            }
+
+            // I-LABEL extends the open span iff it matches.
+            if ( bio == "I" && entity == openLabel && len( openLabel ) ) {
+                openEnd     = offset[ 2 ];
+                openSumConf = openSumConf + confidence;
+                openCount   = openCount + 1;
+                continue;
+            }
+
+            // O (or mismatched I-): close any open span.
+            if ( len( openLabel ) ) {
+                hits.append( _flushHit( openLabel, openStart, openEnd, openSumConf, openCount, arguments.sourceText, arguments.labelToSentinel ) );
+                openLabel = "";
+            }
+        }
+
+        // End-of-sequence: close anything still open.
+        if ( len( openLabel ) ) {
+            hits.append( _flushHit( openLabel, openStart, openEnd, openSumConf, openCount, arguments.sourceText, arguments.labelToSentinel ) );
+        }
+
+        // Drop nulls (un-mapped entities or below-floor confidences).
+        var kept = [];
+        for ( var h in hits ) {
+            if ( !isNull( h ) ) {
+                kept.append( h );
+            }
+        }
+        return kept;
+    }
+
+    // ─── internals ───────────────────────────────────────────────────────
+
+    private any function _flushHit(
+        required string  entity,
+        required numeric startPos,
+        required numeric endPos,
+        required numeric sumConf,
+        required numeric count,
+        required string  sourceText,
+        required struct  labelToSentinel
+    ) {
+        var avgConf = arguments.count > 0 ? arguments.sumConf / arguments.count : 0;
+        if ( avgConf < variables.confidenceFloor ) return javaCast( "null", "" );
+        if ( !arguments.labelToSentinel.keyExists( arguments.entity ) ) return javaCast( "null", "" );
+
+        return {
+            "start"      : arguments.startPos,
+            "end"        : arguments.endPos,
+            "value"      : mid( arguments.sourceText, arguments.startPos, arguments.endPos - arguments.startPos + 1 ),
+            "label"      : arguments.labelToSentinel[ arguments.entity ],
+            "category"   : variables.category,
+            "priority"   : variables.priority,
+            "confidence" : avgConf,
+            "source"     : variables.sourceName
+        };
+    }
+
+    /**
+     * Parse a BIO tag like `B-PER` / `I-LOC` / `O`. Returns
+     * `{ bio: "B"|"I"|"O", entity: "" | "PER" | ... }`.
+     */
+    private struct function _parseBioTag( required string rawLabel ) {
+        if ( arguments.rawLabel == "O" || !len( arguments.rawLabel ) ) {
+            return { "bio": "O", "entity": "" };
+        }
+        if ( find( "-", arguments.rawLabel ) == 0 ) {
+            return { "bio": "O", "entity": "" };
+        }
+        var parts = listToArray( arguments.rawLabel, "-" );
+        var bio   = parts[ 1 ];
+        if ( bio != "B" && bio != "I" ) {
+            return { "bio": "O", "entity": "" };
+        }
+        // Support labels that contain hyphens (e.g. "B-CREDIT-CARD") by
+        // rejoining everything after the first segment.
+        var entity = "";
+        for ( var i = 2; i <= arrayLen( parts ); i++ ) {
+            entity = entity & ( i > 2 ? "-" : "" ) & parts[ i ];
+        }
+        return { "bio": bio, "entity": entity };
+    }
+
+    /**
+     * Argmax over a numeric row. Returns `{ index: numeric, confidence: numeric }`.
+     * `confidence` is the raw logit value — callers can softmax outside if
+     * a probability-normalized score is needed.
+     */
+    private struct function _argmax( required array row ) {
+        var bestIdx   = 0;    // 0-based to match HF id2label
+        var bestValue = arguments.row[ 1 ];
+        for ( var i = 2; i <= arrayLen( arguments.row ); i++ ) {
+            if ( arguments.row[ i ] > bestValue ) {
+                bestValue = arguments.row[ i ];
+                bestIdx   = i - 1;
+            }
+        }
+        return { "index": bestIdx, "confidence": bestValue };
+    }
+
+}

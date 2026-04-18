@@ -5,12 +5,12 @@
  * into bx-AISentinel via its externalDetectors policy setting. See README
  * and the main sentinel's models/detectors/CONTRACT.md.
  *
- * Status: v0.1.0-pre — scaffolding. Real ONNX Runtime + GLiNER wiring lands
+ * Status: v0.2.0-pre — scaffolding. Real ONNX Runtime + GLiNER wiring lands
  * in subsequent phases. Current `OnnxNerDetector.scan()` returns empty hits.
  */
 class {
 
-    property name="moduleVersion" default="0.1.0-pre";
+    property name="moduleVersion" default="0.2.0-pre";
 
     // Explicit name so the WireBox ID stays `OnnxNerDetector@bx-AISentinel-ONNX`
     // regardless of the install directory's case.
@@ -19,15 +19,15 @@ class {
     this.author         = "Ortus Solutions, Corp";
     this.webURL         = "https://github.com/mrigsby/bx-AISentinel-ONNX";
     this.description    = "ONNX Runtime + GLiNER-backed Tier 1 NER PII detector for bx-AISentinel.";
-    this.version        = "0.1.0-pre";
+    this.version        = "0.2.0-pre";
     this.cfmapping      = "bxAiSentinelOnnx";
     this.modelNamespace = "bxaisentinelonnx";
     this.autoMapModels  = true;
 
-    // This module does not depend on ColdBox-loaded modules. It provides a
-    // detector that bx-AISentinel consumes via its externalDetectors plugin
-    // seam when both modules are installed side-by-side in a host app.
-    this.dependencies   = [];
+    // cbjavaloader must load BEFORE this module so `loader@cbjavaloader` is
+    // WireBox-resolvable in onLoad(). We use it to expose the ONNX Runtime
+    // and HuggingFace tokenizer JARs (placed in lib/) to BoxLang at runtime.
+    this.dependencies   = [ "cbjavaloader" ];
 
     /**
      * Module settings. Consumed by `ModelAssetManager` in Phase 4. Host apps
@@ -53,7 +53,46 @@ class {
         };
     }
 
-    function onLoad() {}
+    /**
+     * Register the module's `lib/` directory with cbjavaloader so the bundled
+     * ONNX Runtime + HuggingFace tokenizer JARs are available at runtime.
+     *
+     * Graceful-degrades when `lib/` is missing or contains no JARs — the
+     * detector's own Phase 4 startup validation is the canonical place
+     * where a missing-asset condition fails loudly. Here we just wire what
+     * exists and log the state for operators.
+     */
+    function onLoad() {
+        var modulePath = getDirectoryFromPath( getCurrentTemplatePath() );
+        var libDir     = modulePath & "lib";
+
+        if ( !directoryExists( libDir ) ) {
+            writeLog(
+                type = "information",
+                file = "bx-aisentinel-onnx",
+                text = "lib/ directory missing at " & libDir & " — ONNX classes will not resolve until JARs are placed there. See README."
+            );
+            return;
+        }
+
+        var jars = directoryList( path = libDir, recurse = false, listInfo = "name", filter = "*.jar" );
+
+        try {
+            var loader = wirebox.getInstance( "loader@cbjavaloader" );
+            loader.appendPaths( libDir );
+            writeLog(
+                type = "information",
+                file = "bx-aisentinel-onnx",
+                text = "cbjavaloader appended " & libDir & " (" & arrayLen( jars ) & " JAR(s) found)"
+            );
+        } catch ( any e ) {
+            writeLog(
+                type = "error",
+                file = "bx-aisentinel-onnx",
+                text = "Failed to register lib/ with cbjavaloader: " & ( e.message ?: "unknown" ) & " — ensure cbjavaloader is installed."
+            );
+        }
+    }
 
     function onUnload() {}
 

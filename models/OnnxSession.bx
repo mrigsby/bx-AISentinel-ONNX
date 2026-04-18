@@ -1,0 +1,211 @@
+/**
+ * OnnxSession — thread-safe singleton wrapper around an `OrtSession` plus
+ * an `ai.djl.huggingface.tokenizers.HuggingFaceTokenizer`.
+ *
+ * Lifecycle:
+ *   - `init( config )` stores the target paths; does NOT load anything.
+ *   - First call to `ensureLoaded()` lazy-loads the ONNX Runtime environment,
+ *     opens the session, and constructs the tokenizer. Subsequent calls
+ *     short-circuit.
+ *   - `isReady()` is cheap and safe to call from hot paths.
+ *   - `tokenize( text )` + `runInference( inputIds, attentionMask )` are
+ *     the only inference methods callers need.
+ *
+ * Thread safety: after construction, `OrtSession.run()` is safe to call
+ * concurrently. `OrtEnvironment` is a JVM-wide singleton; we cache the one
+ * reference. Do not share one `OnnxSession` across multiple model paths —
+ * use WireBox to keep exactly one instance per loaded model.
+ *
+ * Phase 3 scope: real class-loading path, lazy-ready protocol, clear status
+ * reporting. Actual inference wiring + real model integration land in
+ * Phase 4 when `ModelAssetManager` materializes the paths.
+ */
+class singleton {
+
+    property name="modelPath"     type="string" default="";
+    property name="tokenizerPath" type="string" default="";
+    property name="loaded"        type="boolean" default="false";
+    property name="loadError"     type="string" default="";
+    property name="ortEnvironment" type="any";
+    property name="ortSession"     type="any";
+    property name="tokenizer"      type="any";
+
+    function init( struct config = {} ) {
+        variables.modelPath     = arguments.config.modelPath     ?: "";
+        variables.tokenizerPath = arguments.config.tokenizerPath ?: "";
+        variables.loaded        = false;
+        variables.loadError     = "";
+        variables.ortEnvironment = javaCast( "null", "" );
+        variables.ortSession     = javaCast( "null", "" );
+        variables.tokenizer      = javaCast( "null", "" );
+        return this;
+    }
+
+    /**
+     * Fast, no-side-effect ready check. Callers that expect a loaded
+     * session should call this before `runInference` / `tokenize` and
+     * handle the `false` case by returning empty results.
+     */
+    boolean function isReady() {
+        return variables.loaded;
+    }
+
+    /**
+     * Attempt to load the ONNX environment, session, and tokenizer. Safe to
+     * call multiple times — short-circuits once loaded. Failures are cached
+     * on `loadError` so repeated calls don't re-log the same failure.
+     *
+     * Returns true iff the session is ready after this call.
+     */
+    boolean function ensureLoaded() {
+        if ( variables.loaded ) return true;
+
+        if ( !len( variables.modelPath ) || !fileExists( variables.modelPath ) ) {
+            variables.loadError = "modelPath missing or file does not exist: " & variables.modelPath;
+            return false;
+        }
+        if ( !len( variables.tokenizerPath ) || !fileExists( variables.tokenizerPath ) ) {
+            variables.loadError = "tokenizerPath missing or file does not exist: " & variables.tokenizerPath;
+            return false;
+        }
+
+        try {
+            // ONNX Runtime — single JVM-wide environment instance.
+            var ortEnvClass = createObject( "java", "ai.onnxruntime.OrtEnvironment" );
+            variables.ortEnvironment = ortEnvClass.getEnvironment();
+
+            // Session is heavy; construct once and reuse.
+            variables.ortSession = variables.ortEnvironment.createSession( variables.modelPath );
+
+            // HuggingFace tokenizer — one instance per model.
+            var tokenizerClass = createObject( "java", "ai.djl.huggingface.tokenizers.HuggingFaceTokenizer" );
+            variables.tokenizer = tokenizerClass.newInstance( variables.tokenizerPath );
+
+            variables.loaded = true;
+            variables.loadError = "";
+
+            writeLog(
+                type = "information",
+                file = "bx-aisentinel-onnx",
+                text = "OnnxSession loaded model=" & variables.modelPath & ", tokenizer=" & variables.tokenizerPath
+            );
+            return true;
+        }
+        catch ( any e ) {
+            variables.loadError = ( e.message ?: "unknown" ) & " (" & ( e.type ?: "exception" ) & ")";
+            writeLog(
+                type = "error",
+                file = "bx-aisentinel-onnx",
+                text = "OnnxSession load failed: " & variables.loadError & " — verify JARs placed in lib/ and model files at modelPath."
+            );
+            return false;
+        }
+    }
+
+    /**
+     * Tokenize text using the loaded HuggingFace tokenizer. Returns a
+     * struct with the shape the ONNX model expects:
+     *   { inputIds: int[], attentionMask: int[], offsetMapping: [ [start,end], ... ] }
+     *
+     * Caller should verify `isReady()` first; this throws if called before
+     * load (catching it would hide a caller bug).
+     */
+    struct function tokenize( required string text ) {
+        if ( !variables.loaded ) {
+            throw( message: "OnnxSession.tokenize called before session was loaded. Call ensureLoaded() first." );
+        }
+
+        var encoding  = variables.tokenizer.encode( arguments.text );
+        var ids       = encoding.getIds();
+        var attention = encoding.getAttentionMask();
+        var offsets   = encoding.getCharTokenSpans();
+
+        var offsetPairs = [];
+        for ( var i = 1; i <= arrayLen( offsets ); i++ ) {
+            offsetPairs.append( [ offsets[ i ].getStart(), offsets[ i ].getEnd() ] );
+        }
+
+        return {
+            "inputIds"      : _longArrayToArray( ids ),
+            "attentionMask" : _longArrayToArray( attention ),
+            "offsetMapping" : offsetPairs
+        };
+    }
+
+    /**
+     * Run the ONNX model against tokenizer output. Returns the raw logits
+     * array (shape depends on model; for token-classification NER it's
+     * [seqLen, numLabels]). EntityDecoder turns this into Hit structs.
+     */
+    any function runInference( required array inputIds, required array attentionMask ) {
+        if ( !variables.loaded ) {
+            throw( message: "OnnxSession.runInference called before session was loaded. Call ensureLoaded() first." );
+        }
+
+        var longsClass = createObject( "java", "java.lang.Long" );
+        var idsLong    = _toLongArray( arguments.inputIds );
+        var maskLong   = _toLongArray( arguments.attentionMask );
+
+        // ONNX expects [batch, seq] int64 tensors. Batch size is always 1 here.
+        var inputTensor = _createTensor( idsLong );
+        var maskTensor  = _createTensor( maskLong );
+
+        var inputs = {
+            "input_ids"      : inputTensor,
+            "attention_mask" : maskTensor
+        };
+
+        var outputs = variables.ortSession.run( inputs );
+        var rawLogits = outputs.get( 0 ).getValue();
+
+        // Release tensor handles immediately — OnnxRuntime holds off-heap memory.
+        inputTensor.close();
+        maskTensor.close();
+        outputs.close();
+
+        return rawLogits;
+    }
+
+    /**
+     * Diagnostic snapshot for operator health checks + dashboards.
+     */
+    struct function getStatus() {
+        return {
+            "loaded"        : variables.loaded,
+            "modelPath"     : variables.modelPath,
+            "tokenizerPath" : variables.tokenizerPath,
+            "loadError"     : variables.loadError
+        };
+    }
+
+    // ─── internals ───────────────────────────────────────────────────────
+
+    private any function _createTensor( required any longArray ) {
+        // Build a [1, seqLen] int64 tensor from a Java long[]. ONNX Java API
+        // requires `OnnxTensor.createTensor(env, LongBuffer, shape[])`.
+        var onnxTensorClass = createObject( "java", "ai.onnxruntime.OnnxTensor" );
+        var longBufferClass = createObject( "java", "java.nio.LongBuffer" );
+        var buffer          = longBufferClass.wrap( arguments.longArray );
+        var shape           = _toLongArray( [ 1, arrayLen( arguments.longArray ) ] );
+        return onnxTensorClass.createTensor( variables.ortEnvironment, buffer, shape );
+    }
+
+    private any function _toLongArray( required array values ) {
+        var jArr = createObject( "java", "java.lang.reflect.Array" )
+            .newInstance( createObject( "java", "java.lang.Long" ).TYPE, arrayLen( arguments.values ) );
+        for ( var i = 1; i <= arrayLen( arguments.values ); i++ ) {
+            jArr[ i ] = javaCast( "long", arguments.values[ i ] );
+        }
+        return jArr;
+    }
+
+    private array function _longArrayToArray( required any jArr ) {
+        var out = [];
+        var len = arrayLen( arguments.jArr );
+        for ( var i = 1; i <= len; i++ ) {
+            out.append( arguments.jArr[ i ] );
+        }
+        return out;
+    }
+
+}

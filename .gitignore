@@ -21,6 +21,13 @@ tests/.tmp-*/
 # wiped on reinstall anyway.
 assets/
 
+# ─── Java dependency JARs — placed at runtime, never committed ───────────
+# cbjavaloader loads these at ModuleConfig.onLoad. See lib/README.md for
+# placement instructions. lib/README.md IS committed via the negation
+# below so fresh clones have documentation in place.
+lib/*
+!lib/README.md
+
 # ─── Internal development notes — never published ────────────────────────
 # Plans, investigation scratch, discovery logs. Seeded in Phase 2 with
 # DEV-NOTES/discovery-log.md for findings that apply to the eventual

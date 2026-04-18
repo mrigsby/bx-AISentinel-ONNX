@@ -1,0 +1,308 @@
+/**
+ * EntityDecoderSpec — pure-BoxLang coverage of logits → Hit decoding.
+ *
+ * No JARs, no ONNX Runtime, no real model. The decoder is fed synthetic
+ * logits + offset mappings crafted to exercise each branch of BIO decoding.
+ *
+ * id2label scheme used across specs:
+ *   0 → "O", 1 → "B-PER", 2 → "I-PER", 3 → "B-LOC", 4 → "I-LOC",
+ *   5 → "B-CREDIT-CARD", 6 → "I-CREDIT-CARD"
+ */
+class extends="testbox.system.BaseSpec" {
+
+    function beforeAll() {
+        variables.id2label = {
+            0 : "O",
+            1 : "B-PER",
+            2 : "I-PER",
+            3 : "B-LOC",
+            4 : "I-LOC",
+            5 : "B-CREDIT-CARD",
+            6 : "I-CREDIT-CARD"
+        };
+        variables.labelToSentinel = {
+            "PER"         : "PII_PERSON_NAME",
+            "LOC"         : "PII_ADDRESS",
+            "CREDIT-CARD" : "PII_CREDIT_CARD"
+        };
+    }
+
+    function run() {
+
+        describe( "EntityDecoder.decode — BIO decoding", function() {
+
+            it( "returns empty for empty logits", function() {
+                var d = _make();
+                var out = d.decode(
+                    logits          : [],
+                    offsetMapping   : [],
+                    sourceText      : "",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 0 );
+            } );
+
+            it( "emits no hits when every token is O", function() {
+                var d = _make();
+                var logits  = [
+                    [ 0.9, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1 ],
+                    [ 0.9, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1 ],
+                    [ 0.9, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1 ]
+                ];
+                var offsets = [ [1,5], [7,10], [12,15] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "hello world today",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 0 );
+            } );
+
+            it( "emits a single hit for a single-token B-PER", function() {
+                var d = _make();
+                var logits = [
+                    [ 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1 ]   // B-PER
+                ];
+                var offsets = [ [1,5] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Alice works here",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 1 );
+                expect( out[ 1 ].label    ).toBe( "PII_PERSON_NAME" );
+                expect( out[ 1 ].value    ).toBe( "Alice" );
+                expect( out[ 1 ].category ).toBe( "pii-ner" );
+                expect( out[ 1 ].source   ).toBe( "OnnxNerDetector" );
+                expect( out[ 1 ].start    ).toBe( 1 );
+                expect( out[ 1 ].end      ).toBe( 5 );
+            } );
+
+            it( "merges consecutive B-PER I-PER into a single span", function() {
+                var d = _make();
+                var logits = [
+                    [ 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1 ],   // B-PER
+                    [ 0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1 ]    // I-PER
+                ];
+                var offsets = [ [1,5], [7,14] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Alice Martinez went home",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 1 );
+                expect( out[ 1 ].value ).toBe( "Alice Martinez" );
+                expect( out[ 1 ].start ).toBe( 1 );
+                expect( out[ 1 ].end   ).toBe( 14 );
+            } );
+
+            it( "closes the open span when an O token appears", function() {
+                var d = _make();
+                var logits = [
+                    [ 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1 ],   // B-PER
+                    [ 0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1 ],   // I-PER
+                    [ 0.9, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1 ]    // O
+                ];
+                var offsets = [ [1,5], [7,12], [14,17] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Alice Martinez rode home",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 1 );
+                expect( out[ 1 ].end ).toBe( 12 );    // did not include "rode"
+            } );
+
+            it( "treats an I-LABEL that mismatches the open span as a break", function() {
+                var d = _make();
+                var logits = [
+                    [ 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1 ],   // B-PER
+                    [ 0.1, 0.1, 0.1, 0.1, 0.9, 0.1, 0.1 ]    // I-LOC (mismatch)
+                ];
+                var offsets = [ [1,5], [7,12] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Alice Paris saw...",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                // PER span flushes; I-LOC with no open LOC is treated as O → no new hit.
+                expect( out ).toHaveLength( 1 );
+                expect( out[ 1 ].label ).toBe( "PII_PERSON_NAME" );
+                expect( out[ 1 ].value ).toBe( "Alice" );
+            } );
+
+            it( "emits multiple hits when B-X tokens open new spans consecutively", function() {
+                var d = _make();
+                var logits = [
+                    [ 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1 ],   // B-PER
+                    [ 0.1, 0.1, 0.1, 0.9, 0.1, 0.1, 0.1 ]    // B-LOC
+                ];
+                var offsets = [ [1,5], [7,11] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Alice Paris yes",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 2 );
+                expect( out[ 1 ].label ).toBe( "PII_PERSON_NAME" );
+                expect( out[ 1 ].value ).toBe( "Alice" );
+                expect( out[ 2 ].label ).toBe( "PII_ADDRESS" );
+                expect( out[ 2 ].value ).toBe( "Paris" );
+            } );
+
+            it( "skips sub-word tokens whose offset is [0,0]", function() {
+                var d = _make();
+                var logits = [
+                    [ 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1 ],   // B-PER (CLS/sub-word — skipped)
+                    [ 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1 ],   // B-PER (real first token)
+                    [ 0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1 ]    // I-PER
+                ];
+                var offsets = [ [0,0], [1,5], [7,14] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Alice Martinez next",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 1 );
+                expect( out[ 1 ].value ).toBe( "Alice Martinez" );
+            } );
+
+            it( "drops entities whose raw label is not in labelToSentinel", function() {
+                var d = _make();
+                var unmapped = {
+                    0 : "O",
+                    1 : "B-ORG",     // not in labelToSentinel
+                    2 : "I-ORG"
+                };
+                var unmappedToSentinel = { "PER": "PII_PERSON_NAME" };   // no ORG entry
+
+                var logits = [
+                    [ 0.1, 0.9, 0.1 ],
+                    [ 0.1, 0.1, 0.9 ]
+                ];
+                var offsets = [ [1,4], [6,10] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Acme company here",
+                    id2label        : unmapped,
+                    labelToSentinel : unmappedToSentinel
+                );
+                expect( out ).toHaveLength( 0 );
+            } );
+
+            it( "drops spans below the confidence floor", function() {
+                var d = _make( confidenceFloor = 0.8 );
+
+                var logits = [
+                    [ 0.45, 0.55, 0.0, 0.0, 0.0, 0.0, 0.0 ]   // B-PER at 0.55
+                ];
+                var offsets = [ [1,5] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Alice here today",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 0 );
+            } );
+
+            it( "handles multi-hyphen entity names like B-CREDIT-CARD", function() {
+                var d = _make();
+                var logits = [
+                    [ 0.1, 0.1, 0.1, 0.1, 0.1, 0.9, 0.1 ],   // B-CREDIT-CARD
+                    [ 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.9 ]    // I-CREDIT-CARD
+                ];
+                var offsets = [ [1,4], [6,9] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "4111 1111 more",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 1 );
+                expect( out[ 1 ].label ).toBe( "PII_CREDIT_CARD" );
+                expect( out[ 1 ].value ).toBe( "4111 1111" );
+            } );
+
+            it( "flushes an open span when the sequence ends", function() {
+                var d = _make();
+                var logits = [
+                    [ 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1 ],   // B-PER
+                    [ 0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1 ]    // I-PER (last)
+                ];
+                var offsets = [ [1,5], [7,12] ];
+
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Alice Martinez",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out ).toHaveLength( 1 );
+                expect( out[ 1 ].end ).toBe( 12 );
+            } );
+
+            it( "copies the priority / source / category from the decoder's config", function() {
+                var d = _make( category = "custom-pii", priority = 4, sourceName = "MyCustom" );
+                var logits  = [ [ 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1 ] ];
+                var offsets = [ [1,5] ];
+                var out = d.decode(
+                    logits          : logits,
+                    offsetMapping   : offsets,
+                    sourceText      : "Alice only",
+                    id2label        : variables.id2label,
+                    labelToSentinel : variables.labelToSentinel
+                );
+                expect( out[ 1 ].category ).toBe( "custom-pii" );
+                expect( out[ 1 ].priority ).toBe( 4 );
+                expect( out[ 1 ].source   ).toBe( "MyCustom" );
+            } );
+
+        } );
+
+    }
+
+    private any function _make(
+                 string  category        = "pii-ner",
+                 numeric priority        = 2,
+                 string  sourceName      = "OnnxNerDetector",
+                 numeric confidenceFloor = 0.5
+    ) {
+        return new bxAiSentinelOnnx.models.EntityDecoder(
+            category        : arguments.category,
+            priority        : arguments.priority,
+            sourceName      : arguments.sourceName,
+            confidenceFloor : arguments.confidenceFloor
+        );
+    }
+
+}

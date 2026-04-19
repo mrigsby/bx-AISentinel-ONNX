@@ -10,7 +10,7 @@
  */
 class {
 
-    property name="moduleVersion" default="0.4.2-pre";
+    property name="moduleVersion" default="0.4.3-pre";
 
     // `this.name` is intentionally NOT set — ColdBox falls back to the install
     // directory name (`bx-AISentinel-ONNX`, matching the GitHub repo + box.json
@@ -28,7 +28,7 @@ class {
     this.author         = "Ortus Solutions, Corp";
     this.webURL         = "https://github.com/mrigsby/bx-AISentinel-ONNX";
     this.description    = "ONNX Runtime + GLiNER-backed Tier 1 NER PII detector for bx-AISentinel.";
-    this.version        = "0.4.2-pre";
+    this.version        = "0.4.3-pre";
     this.cfmapping      = "bxAISentinelONNX";
     this.modelNamespace = "bxAISentinelONNX";
     this.autoMapModels  = true;

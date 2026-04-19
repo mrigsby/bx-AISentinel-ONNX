@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.4.3-pre] - 2026-04-19
+
+### Fixed
+
+- **Drop `"*.md"` from `box.json` `ignore`** so the README and CHANGELOG ship with `box install` packages. CommandBox interprets `*.md` recursively (matches all markdown files at any depth), and even though this module doesn't ship a code-required markdown file, dropping the docs from installed copies meant operators couldn't read them in `modules_app/bx-aisentinel-onnx/`. Same fix applied to the core `bx-AISentinel` module v0.3.1, where the missing file was `includes/token-protocol.md` — that one was load-bearing and the LLM was getting a fallback prompt instead of the v0.3.0 coaching rewrite. ~30 KB additional package size; no functional cost.
+
 ## [0.4.2-pre] - 2026-04-19
 
 Real-world host-app fix. The first end-user test of v0.4.1-pre against a fresh demo install hit a silent path-resolution bug — the detector reported "Tier 1: active" in the UI, but `OnnxSession.ensureLoaded()` failed with `modelPath missing or file does not exist: model.onnx` because `_readColdBoxModuleSettings()` couldn't find the host's configuration.

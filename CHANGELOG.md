@@ -6,6 +6,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.4.4-pre] - 2026-04-19
+
+The actual fix for the v0.4.2-pre / v0.4.3-pre bug — turned out to be deeper than a config-shape mismatch.
+
+### Fixed
+
+- **`OnnxNerDetector` now reads `.boxlang.json` directly** (mirroring the core `bx-AISentinel` module's `SentinelPolicy._readBoxlangJson()` pattern) instead of going through `application.cbController.getSetting("modules")`. Empirically discovered against a fresh demo install (DIAG dump): the `bx-aisentinel-onnx` entry in ColdBox's modules struct had `SETTINGS: {}` even when the host had the module's settings populated in `.boxlang.json`. Reason: **`.boxlang.json → modules.<name>` is BoxLang RUNTIME module config, NOT ColdBox module config — they're two separate config namespaces**. ColdBox doesn't merge BoxLang-runtime module settings into its module struct. The core sentinel works because it reads the file directly; the v0.4.x ONNX module was going through the wrong namespace and silently finding nothing.
+
+  New `_readModuleSettings()` + `_readBoxlangJsonModuleEntry()` private methods replace `_readColdBoxModuleSettings()`. They:
+  - Try `.boxlang.json` first, fall back to `boxlang.json` (matching the core sentinel's preference for the dotfile form)
+  - Read `modules["bx-aisentinel-onnx"]` directly via `fileRead` + `jsonDeserialize`
+  - Accept both top-level keys (matches our docs) AND nested `.settings` (strict ColdBox convention) — top-level wins
+  - Pure side-effect-free file read; returns `{}` on any failure (no host config → defaults apply)
+
+### DEV-NOTES (added)
+
+- The `bx-AISentinel-ONNX` cross-module-resolution section gains a corollary entry: BoxLang runtime module config and ColdBox module config are SEPARATE namespaces. Modules that need to read host config from `.boxlang.json` must do so directly, not via `cbController.getSetting("modules")`. Future siblings (GLiNER, DJL) inherit this lesson.
+
+### Compatibility
+
+Pure additive fix. v0.4.3-pre installs with the (broken) ColdBox-getSetting lookup were silently using defaults — and since the default `modelPath` is `""`, the session never loaded. Upgrading to v0.4.4-pre makes the host's `.boxlang.json` settings actually reach the detector. No API changes; no config-shape changes required from hosts.
+
 ## [0.4.3-pre] - 2026-04-19
 
 ### Fixed

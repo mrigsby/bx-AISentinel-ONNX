@@ -46,7 +46,7 @@ class {
         // which is the idiomatic ColdBox pattern). Explicit `arguments.settings`
         // wins — that's how the sentinel passes `externalDetectorOptions[ id ]`
         // through, and how tests inject fixtures.
-        var moduleDefaults = _readColdBoxModuleSettings();
+        var moduleDefaults = _readModuleSettings();
         variables.settings = _mergeSettings( moduleDefaults, arguments.settings );
 
         // Asset manager resolves model paths + validates. Caller-supplied
@@ -86,19 +86,23 @@ class {
     }
 
     /**
-     * Pull the module's ColdBox-registered settings block so host apps can
-     * configure the detector via `.boxlang.json → modules.bx-aisentinel-onnx`.
-     * Returns an empty struct when running outside a ColdBox context (tests,
-     * standalone BoxLang, direct `createObject` instantiation).
+     * Pull the module's host-app settings.
      *
-     * This is the layer that makes the user-facing config actually reach
-     * `ModelAssetManager` + `OnnxSession` without requiring the sentinel to
-     * forward every ONNX-specific setting via `externalDetectorOptions`.
+     * **Reads `.boxlang.json` (or `boxlang.json`) DIRECTLY**, mirroring the
+     * core `bx-AISentinel` module's `SentinelPolicy._readBoxlangJson()`
+     * pattern. Goes through the file system rather than
+     * `application.cbController.getSetting("modules")` because BoxLang
+     * runtime modules (configured in `.boxlang.json → modules.<name>`) live
+     * in a SEPARATE config namespace from ColdBox modules — ColdBox's
+     * getSetting always reports an empty `.settings` struct for our entries
+     * even when the host has them populated in `.boxlang.json`. Discovered
+     * empirically 2026-04-19 against a fresh demo install (DIAG dump showed
+     * `SETTINGS: {}` with the host's actual settings nowhere in the
+     * ColdBox-merged module config).
      *
-     * **Two shapes accepted** (top-level keys win when both exist):
+     * Two shapes accepted (top-level keys win when both exist):
      *
-     *   1. **Top-level keys** (matches the core `bx-aisentinel` module's
-     *      convention and what the testing-path / help-page docs show):
+     *   1. **Top-level keys** (matches the core sentinel + our docs):
      *      ```json
      *      "bx-aisentinel-onnx": {
      *          "modelName": "piiranha-pii-v1",
@@ -106,39 +110,58 @@ class {
      *      }
      *      ```
      *
-     *   2. **Nested under `.settings`** (the strict ColdBox convention some
-     *      hosts default to):
+     *   2. **Nested under `.settings`** (strict ColdBox convention):
      *      ```json
      *      "bx-aisentinel-onnx": {
      *          "settings": { "modelName": "...", "modelPath": "..." }
      *      }
      *      ```
      *
-     * Top-level takes precedence so hosts following our docs aren't surprised
-     * if they ALSO have a `.settings` block from another tool.
+     * Returns `{}` when no `.boxlang.json` / `boxlang.json` exists or the
+     * module's section is missing — caller falls back to its own defaults.
      */
-    private struct function _readColdBoxModuleSettings() {
-        try {
-            if ( !structKeyExists( application, "cbController" ) ) return {};
-            var moduleConfig = application.cbController.getSetting( "modules" );
-            if ( !isStruct( moduleConfig ) || !structKeyExists( moduleConfig, "bx-aisentinel-onnx" ) ) return {};
-            var moduleEntry = moduleConfig[ "bx-aisentinel-onnx" ];
-            if ( !isStruct( moduleEntry ) ) return {};
+    private struct function _readModuleSettings() {
+        var entry = _readBoxlangJsonModuleEntry();
+        if ( !structCount( entry ) ) return {};
 
-            // Detect whether the entry has any of OUR known top-level keys
-            // (modelName / modelPath / etc.). If yes → return the entry as
-            // settings directly. Otherwise fall back to .settings sub-key.
-            var topLevelKeys = [ "modelName", "modelPath", "modelSource", "tokenizerSource",
-                                 "modelChecksum", "tokenizerChecksum", "assetMode", "eagerInit",
-                                 "downloadTimeoutMs", "acceptUnverified", "acceptUnverifiedLicense",
-                                 "confidenceFloor", "id2label", "labelToSentinel" ];
-            for ( var key in topLevelKeys ) {
-                if ( structKeyExists( moduleEntry, key ) ) {
-                    return duplicate( moduleEntry );
-                }
+        var topLevelKeys = [ "modelName", "modelPath", "modelSource", "tokenizerSource",
+                             "modelChecksum", "tokenizerChecksum", "assetMode", "eagerInit",
+                             "downloadTimeoutMs", "acceptUnverified", "acceptUnverifiedLicense",
+                             "confidenceFloor", "id2label", "labelToSentinel" ];
+        for ( var key in topLevelKeys ) {
+            if ( structKeyExists( entry, key ) ) {
+                return duplicate( entry );
             }
-            if ( structKeyExists( moduleEntry, "settings" ) && isStruct( moduleEntry.settings ) ) {
-                return duplicate( moduleEntry.settings );
+        }
+        if ( structKeyExists( entry, "settings" ) && isStruct( entry.settings ) ) {
+            return duplicate( entry.settings );
+        }
+        return {};
+    }
+
+    /**
+     * Read the host's `.boxlang.json` (or `boxlang.json` fallback) and
+     * extract `modules["bx-aisentinel-onnx"]`. Returns `{}` if neither file
+     * exists, the JSON is malformed, or the module section isn't present.
+     * Pure side-effect-free file read.
+     */
+    private struct function _readBoxlangJsonModuleEntry() {
+        try {
+            var candidates = [];
+            try { candidates.append( expandPath( "/.boxlang.json" ) ); } catch ( any e ) {}
+            try { candidates.append( expandPath( "/boxlang.json" ) ); }  catch ( any e ) {}
+
+            for ( var path in candidates ) {
+                if ( !len( path ) || !fileExists( path ) ) continue;
+                var raw = fileRead( path );
+                if ( !len( raw ) ) continue;
+                var doc = jsonDeserialize( raw );
+                if ( !isStruct( doc ) ) continue;
+                if ( !structKeyExists( doc, "modules" ) || !isStruct( doc.modules ) ) continue;
+                if ( !structKeyExists( doc.modules, "bx-aisentinel-onnx" ) ) continue;
+                var entry = doc.modules[ "bx-aisentinel-onnx" ];
+                if ( !isStruct( entry ) ) continue;
+                return entry;
             }
             return {};
         } catch ( any e ) {

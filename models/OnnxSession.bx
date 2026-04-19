@@ -102,12 +102,15 @@ class singleton {
             return true;
         }
         catch ( any e ) {
-            variables.loadError = ( e.message ?: "unknown" ) & " (" & ( e.type ?: "exception" ) & ")";
-            writeLog(
-                type = "error",
-                file = "bx-aisentinel-onnx",
-                text = "OnnxSession load failed: " & variables.loadError & " — verify JARs placed in lib/ and model files at modelPath."
-            );
+            // Bake the troubleshooting hint into the cached loadError so the
+            // guarded log helper renders it once per process instead of
+            // re-logging on every scan() call. Prior version did a direct
+            // writeLog here without the guard — surfaced as 7+ duplicate
+            // error lines per failing scan run during the Stage 3.2 test.
+            variables.loadError = ( e.message ?: "unknown" )
+                & " (" & ( e.type ?: "exception" ) & ")"
+                & " — verify JARs placed in lib/ and model files at modelPath.";
+            _logLoadFailure();
             return false;
         }
     }

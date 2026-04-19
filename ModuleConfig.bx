@@ -10,7 +10,7 @@
  */
 class {
 
-    property name="moduleVersion" default="0.4.4-pre";
+    property name="moduleVersion" default="1.0.0";
 
     // `this.name` is intentionally NOT set — ColdBox falls back to the install
     // directory name (`bx-AISentinel-ONNX`, matching the GitHub repo + box.json
@@ -25,10 +25,10 @@ class {
     // modelNamespace identical so test imports + production lookups use the
     // same string.
     this.title          = "BX AI Sentinel — ONNX NER Detector";
-    this.author         = "Ortus Solutions, Corp";
+    this.author         = "Michael Rigsby <mrigsby@oistech.com>";
     this.webURL         = "https://github.com/mrigsby/bx-AISentinel-ONNX";
     this.description    = "ONNX Runtime + GLiNER-backed Tier 1 NER PII detector for bx-AISentinel.";
-    this.version        = "0.4.4-pre";
+    this.version        = "1.0.0";
     this.cfmapping      = "bxAISentinelONNX";
     this.modelNamespace = "bxAISentinelONNX";
     this.autoMapModels  = true;

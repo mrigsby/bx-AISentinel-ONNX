@@ -6,6 +6,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-19
+
+First non-pre release. Drops the `-pre` suffix now that the full pipeline has been verified end-to-end against a fresh-clone install (Stages 1+2+3 of `End-User-Testing-Path.md`). The v0.4.x line walked the cluster of install-cycle bugs that the test harness alone could not catch (BoxLang vs ColdBox config namespaces, recursive `*.md` ignore, token-presence false positives, transitive-dep class-cache invalidation); v1.0.0 rolls those into a stable release.
+
+### Added
+
+- Nothing new in v1.0.0 itself — this is a graduation release. All v0.4.x added surface (cfmapping rename, `lastScanError`, `validateAssets()` shape, etc.) is now part of the v1 contract.
+
+### Fixed
+
+- **`OnnxSession.ensureLoaded()` catch-block log noise.** Prior versions did an un-guarded `writeLog` inside the JNI-class-load catch — every failed `scan()` call re-logged the same error, producing 7+ duplicate lines per failing run during Stage 3.2 of the end-user testing path. Refactored to bake the troubleshooting hint into `variables.loadError` and route through the existing `_logLoadFailure()` helper, which has the `loadErrorLogged` once-per-process guard. Single error line per process; same actionable content.
+
+### Compatibility
+
+No API or config-shape changes from v0.4.4-pre. Hosts upgrading from v0.4.4-pre or earlier should clear the `.engine/boxlang/WEB-INF/boxlang/classes/` cache on first restart to avoid the `Cannot reassign final key` class-cache issue documented in `DEV-NOTES`.
+
+### What's NOT in v1.0.0 (deferred to future siblings)
+
+- **`bx-AISentinel-GLiNER` sibling module** — closes Piiranha's first-name + arbitrary-identifier gaps via zero-shot label declaration. Documented in `DOCUMENTATION/07-future-work.md` "Tier 1 — GLiNER Sibling Module — 🟢 NEXT".
+- **`bx-AISentinel-DJL` sibling module** — Stanford medical-PII deidentifier on PyTorch. Documented in `DOCUMENTATION/07-future-work.md` "Tier 1 — DJL Medical-PII Variant — ⏸ DEFERRED".
+- **`JarAssetManager`** — automate `lib/` JAR placement (parallel to `ModelAssetManager`). Documented in main README + lib/README.
+- **`decoderStrategy` runtime dispatch** — current single decoder handles BIO + IO via the IO-friendly state machine; runtime dispatch would only matter when a third strategy (e.g., span-prediction for GLiNER) joins.
+
 ## [0.4.4-pre] - 2026-04-19
 
 The actual fix for the v0.4.2-pre / v0.4.3-pre bug — turned out to be deeper than a config-shape mismatch.

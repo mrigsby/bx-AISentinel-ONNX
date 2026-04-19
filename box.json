@@ -1,8 +1,8 @@
 {
     "name"        : "bx-AISentinel-ONNX",
     "slug"        : "bx-aisentinel-onnx",
-    "version"     : "0.4.4-pre",
-    "author"      : "Ortus Solutions, Corp",
+    "version"     : "1.0.0",
+    "author"      : "Michael Rigsby <mrigsby@oistech.com>",
     "location"    : "forgeboxStorage",
     "homepage"    : "https://github.com/mrigsby/bx-AISentinel-ONNX",
     "description" : "ONNX Runtime + GLiNER-backed Tier 1 NER PII detector for bx-AISentinel. Plugs into the sentinel's externalDetectors plugin seam.",

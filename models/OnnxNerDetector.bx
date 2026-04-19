@@ -87,14 +87,35 @@ class {
 
     /**
      * Pull the module's ColdBox-registered settings block so host apps can
-     * configure the detector via `.boxlang.json → modules.bx-aisentinel-onnx`
-     * — the idiomatic ColdBox pattern. Returns an empty struct when running
-     * outside a ColdBox context (tests, standalone BoxLang, direct
-     * `createObject` instantiation).
+     * configure the detector via `.boxlang.json → modules.bx-aisentinel-onnx`.
+     * Returns an empty struct when running outside a ColdBox context (tests,
+     * standalone BoxLang, direct `createObject` instantiation).
      *
      * This is the layer that makes the user-facing config actually reach
      * `ModelAssetManager` + `OnnxSession` without requiring the sentinel to
      * forward every ONNX-specific setting via `externalDetectorOptions`.
+     *
+     * **Two shapes accepted** (top-level keys win when both exist):
+     *
+     *   1. **Top-level keys** (matches the core `bx-aisentinel` module's
+     *      convention and what the testing-path / help-page docs show):
+     *      ```json
+     *      "bx-aisentinel-onnx": {
+     *          "modelName": "piiranha-pii-v1",
+     *          "modelPath": "..."
+     *      }
+     *      ```
+     *
+     *   2. **Nested under `.settings`** (the strict ColdBox convention some
+     *      hosts default to):
+     *      ```json
+     *      "bx-aisentinel-onnx": {
+     *          "settings": { "modelName": "...", "modelPath": "..." }
+     *      }
+     *      ```
+     *
+     * Top-level takes precedence so hosts following our docs aren't surprised
+     * if they ALSO have a `.settings` block from another tool.
      */
     private struct function _readColdBoxModuleSettings() {
         try {
@@ -102,8 +123,24 @@ class {
             var moduleConfig = application.cbController.getSetting( "modules" );
             if ( !isStruct( moduleConfig ) || !structKeyExists( moduleConfig, "bx-aisentinel-onnx" ) ) return {};
             var moduleEntry = moduleConfig[ "bx-aisentinel-onnx" ];
-            if ( !isStruct( moduleEntry ) || !structKeyExists( moduleEntry, "settings" ) ) return {};
-            return isStruct( moduleEntry.settings ) ? duplicate( moduleEntry.settings ) : {};
+            if ( !isStruct( moduleEntry ) ) return {};
+
+            // Detect whether the entry has any of OUR known top-level keys
+            // (modelName / modelPath / etc.). If yes → return the entry as
+            // settings directly. Otherwise fall back to .settings sub-key.
+            var topLevelKeys = [ "modelName", "modelPath", "modelSource", "tokenizerSource",
+                                 "modelChecksum", "tokenizerChecksum", "assetMode", "eagerInit",
+                                 "downloadTimeoutMs", "acceptUnverified", "acceptUnverifiedLicense",
+                                 "confidenceFloor", "id2label", "labelToSentinel" ];
+            for ( var key in topLevelKeys ) {
+                if ( structKeyExists( moduleEntry, key ) ) {
+                    return duplicate( moduleEntry );
+                }
+            }
+            if ( structKeyExists( moduleEntry, "settings" ) && isStruct( moduleEntry.settings ) ) {
+                return duplicate( moduleEntry.settings );
+            }
+            return {};
         } catch ( any e ) {
             return {};
         }

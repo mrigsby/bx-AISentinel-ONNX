@@ -6,6 +6,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.4.2-pre] - 2026-04-19
+
+Real-world host-app fix. The first end-user test of v0.4.1-pre against a fresh demo install hit a silent path-resolution bug — the detector reported "Tier 1: active" in the UI, but `OnnxSession.ensureLoaded()` failed with `modelPath missing or file does not exist: model.onnx` because `_readColdBoxModuleSettings()` couldn't find the host's configuration.
+
+### Fixed
+
+- **`OnnxNerDetector._readColdBoxModuleSettings()` now accepts both config shapes**, top-level keys win:
+  - **`modules.bx-aisentinel-onnx.<key>`** (top-level) — what the testing-path doc and demo help page show, and what the core `bx-AISentinel` module already uses for its own settings. This is the recommended form.
+  - **`modules.bx-aisentinel-onnx.settings.<key>`** (nested under `.settings`) — the strict ColdBox convention some hosts default to.
+
+  Prior version required the nested `.settings` wrapper exclusively, so hosts following our docs got an empty settings struct, fell back to ModelAssetManager's empty-string default for `modelPath`, and `_joinPath("", "model.onnx")` returned just `"model.onnx"` — which `fileExists()` resolved relative to the JVM cwd, found nothing, and silently returned `[]` from every `scan()` call. The misleading "active" UI status comes from the detector LOADING successfully (passing the contract gate); only the session load failed, and that's what `validateAssets().sessionLoaded` is for. Tests didn't catch this because the test harness injects settings directly via `arguments.settings`, bypassing the ColdBox-context lookup entirely.
+
+  Detection of which shape to use looks for any of our known top-level keys (`modelName`, `modelPath`, `modelSource`, `tokenizerSource`, `modelChecksum`, `tokenizerChecksum`, `assetMode`, `eagerInit`, `downloadTimeoutMs`, `acceptUnverified`, `acceptUnverifiedLicense`, `confidenceFloor`, `id2label`, `labelToSentinel`); if any are present at the top level, the entry is treated as the settings struct directly. Otherwise falls back to the `.settings` sub-key.
+
+### Compatibility
+
+Pure additive fix — hosts using the documented top-level form now work; hosts using `.settings` still work.
+
 ## [0.4.1-pre] - 2026-04-19
 
 Doc + identifier fix. Every previously-documented WireBox ID for this module was wrong — `OnnxNerDetector@bx-AISentinel-ONNX` does not resolve because WireBox's `Class@Module` parser uses `this.cfmapping`, not `this.name`, and the dash characters in `this.name` were not what controlled lookup. The README, demo help page, testing-path doc, and integration spec comments all said the dashed form. Empirically confirmed by a host attempting to wire the detector via the documented form, watching it fail, and watching the cfmapping form succeed. Fixed across all three repos.

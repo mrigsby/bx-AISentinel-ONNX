@@ -6,6 +6,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.4.1-pre] - 2026-04-19
+
+Doc + identifier fix. Every previously-documented WireBox ID for this module was wrong — `OnnxNerDetector@bx-AISentinel-ONNX` does not resolve because WireBox's `Class@Module` parser uses `this.cfmapping`, not `this.name`, and the dash characters in `this.name` were not what controlled lookup. The README, demo help page, testing-path doc, and integration spec comments all said the dashed form. Empirically confirmed by a host attempting to wire the detector via the documented form, watching it fail, and watching the cfmapping form succeed. Fixed across all three repos.
+
+### Changed
+
+- **`this.cfmapping` renamed `bxAiSentinelOnnx` → `bxAISentinelONNX`** (matching `this.modelNamespace` for unity, and treating `AI` / `ONNX` as acronyms — what most readers expect). The new form is the canonical WireBox suffix going forward.
+- **`this.modelNamespace` renamed `bxaisentinelonnx` → `bxAISentinelONNX`** to match the cfmapping casing exactly. Single identifier across both fields removes the prior 3-way casing split (`bxAiSentinelOnnx` / `bxaisentinelonnx` / `bx-AISentinel-ONNX`).
+- **WireBox resolution ID is now `OnnxNerDetector@bxAISentinelONNX`.** Hosts using `boxlang.json → modules.bx-aisentinel.externalDetectors` must use this form. The dashed `bx-AISentinel-ONNX` form was never working — there are no hosts to migrate.
+- **README, lib/README, CHANGELOG, in-module comments** all updated to use the correct cfmapping form.
+- **Test specs updated** to import via `new bxAISentinelONNX.models.X()` (was `bxAiSentinelOnnx`). Test harness `Application.bx` mapping renamed accordingly.
+- **`ModelAssetManager` exception types** renamed (`bxAiSentinelOnnx.MissingAssets` → `bxAISentinelONNX.MissingAssets`, etc.). Callers using `catch ( bxAiSentinelOnnx.X )` need to update — but again, no documented host did this; tests were the only callers.
+- **DEV-NOTES `Cross-module resolution` entry** populated with the empirical lesson so the next sibling module (GLiNER, DJL) inherits it on day one.
+
+### Compatibility
+
+This is a breaking change for the documented WireBox ID surface, but the documented form was non-functional. Hosts that already had Tier 1 wired-up successfully were using a workaround for the dashed-form failure; check `boxlang.json` and update to `OnnxNerDetector@bxAISentinelONNX`. `this.name` (`bx-AISentinel-ONNX`) is unchanged — install paths, repo names, and box.json `name` / `slug` stay aligned with the GitHub repo.
+
 ## [0.4.0-pre] - 2026-04-19
 
 First release with the full pipeline verified end-to-end against a real model. The `v0.3.x` line declared itself "functional with real assets" — but no one had actually run a real-model integration against it. This release is the product of doing that, which surfaced eight real bugs across `OnnxSession`, `OnnxNerDetector`, `EntityDecoder`, and `SupportedModels`. Every one is fixed; every fix is covered by a unit spec; the `real-model` gated spec asserts structural correctness of entity labels, values, and positions rather than just `arrayLen > 0`.

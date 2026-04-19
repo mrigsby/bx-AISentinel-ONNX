@@ -130,7 +130,7 @@ class extends="testbox.system.BaseSpec" {
                 try {
                     m.ensureAssets();
                     fail( "Expected exception did not fire" );
-                } catch ( bxAiSentinelOnnx.MissingAssets e ) {
+                } catch ( bxAISentinelONNX.MissingAssets e ) {
                     expect( e.message ).toInclude( "auto-download" );
                     expect( e.message ).toInclude( "manual" );
                 }
@@ -153,7 +153,7 @@ class extends="testbox.system.BaseSpec" {
                 try {
                     m.ensureAssets();
                     fail( "Expected UnverifiedModel exception" );
-                } catch ( bxAiSentinelOnnx.UnverifiedModel e ) {
+                } catch ( bxAISentinelONNX.UnverifiedModel e ) {
                     expect( e.message ).toInclude( "acceptUnverified" );
                 }
             } );
@@ -173,7 +173,7 @@ class extends="testbox.system.BaseSpec" {
                 try {
                     m.ensureAssets();
                     fail( "Expected UnverifiedLicense exception" );
-                } catch ( bxAiSentinelOnnx.UnverifiedLicense e ) {
+                } catch ( bxAISentinelONNX.UnverifiedLicense e ) {
                     expect( e.message ).toInclude( "acceptUnverifiedLicense" );
                 }
             } );
@@ -192,7 +192,7 @@ class extends="testbox.system.BaseSpec" {
                 try {
                     m.ensureAssets();
                     fail( "Expected UnknownModel exception" );
-                } catch ( bxAiSentinelOnnx.UnknownModel e ) {
+                } catch ( bxAISentinelONNX.UnknownModel e ) {
                     expect( e.message ).toInclude( "not found" );
                 }
             } );
@@ -243,7 +243,7 @@ class extends="testbox.system.BaseSpec" {
                 try {
                     m.ensureAssets();
                     fail( "Expected DownloadFailed exception" );
-                } catch ( bxAiSentinelOnnx.DownloadFailed e ) {
+                } catch ( bxAISentinelONNX.DownloadFailed e ) {
                     expect( e.message ).toInclude( "network failure" );
                 }
             } );
@@ -268,7 +268,7 @@ class extends="testbox.system.BaseSpec" {
                 try {
                     m.ensureAssets();
                     fail( "Expected PostDownloadValidationFailed exception" );
-                } catch ( bxAiSentinelOnnx.PostDownloadValidationFailed e ) {
+                } catch ( bxAISentinelONNX.PostDownloadValidationFailed e ) {
                     expect( e.message ).toInclude( "validation still failed" );
                 }
             } );
@@ -290,7 +290,7 @@ class extends="testbox.system.BaseSpec" {
                  boolean acceptUnverified        = false,
                  boolean acceptUnverifiedLicense = false
     ) {
-        return new bxAiSentinelOnnx.models.ModelAssetManager( settings: {
+        return new bxAISentinelONNX.models.ModelAssetManager( settings: {
             "modelPath"               : arguments.modelPath,
             "modelName"               : arguments.modelName,
             "modelSource"             : arguments.modelSource,

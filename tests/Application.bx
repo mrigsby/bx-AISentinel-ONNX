@@ -1,8 +1,10 @@
 /**
  * TestBox harness application for bx-AISentinel-ONNX.
  *
- * Maps the module root at `/bxAiSentinelOnnx` so specs can resolve classes
- * via `new bxAiSentinelOnnx.models.OnnxNerDetector()` etc.
+ * Maps the module root at `/bxAISentinelONNX` so specs can resolve classes
+ * via `new bxAISentinelONNX.models.OnnxNerDetector()` etc. Identifier matches
+ * the production cfmapping in `ModuleConfig.bx` so test imports use the same
+ * path the host app's WireBox suffix uses.
  */
 class {
 
@@ -13,7 +15,7 @@ class {
     this.applicationTimeout   = createTimeSpan( 0, 0, 5, 0 );
 
     // Module root (one level above tests/)
-    this.mappings[ "/bxAiSentinelOnnx" ] = expandPath( "../" );
+    this.mappings[ "/bxAISentinelONNX" ] = expandPath( "../" );
     this.mappings[ "/tests" ]            = expandPath( "./" );
 
     // Load the module's lib/ JARs (ONNX Runtime + HuggingFace tokenizer) into the

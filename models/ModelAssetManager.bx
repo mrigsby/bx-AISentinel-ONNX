@@ -156,7 +156,7 @@ class singleton {
         // Manual mode refuses to touch the network.
         if ( variables.settings.assetMode == "manual" ) {
             throw(
-                type    = "bxAiSentinelOnnx.MissingAssets",
+                type    = "bxAISentinelONNX.MissingAssets",
                 message = status.message & " To enable automatic download, set assetMode=""auto-download"" or ""shared-cache"" in module settings. See README."
             );
         }
@@ -165,7 +165,7 @@ class singleton {
         var meta = _getModelMetadata();
         if ( !structCount( meta ) && !len( variables.settings.modelSource ) ) {
             throw(
-                type    = "bxAiSentinelOnnx.UnknownModel",
+                type    = "bxAISentinelONNX.UnknownModel",
                 message = "modelName ""#variables.settings.modelName#"" not found in SupportedModels and no modelSource override provided. Either register the model in SupportedModels.bx or pass modelSource in settings."
             );
         }
@@ -175,7 +175,7 @@ class singleton {
         var hasChecksum = len( variables.settings.modelChecksum ) || len( meta.modelChecksum ?: "" );
         if ( !hasChecksum && !variables.settings.acceptUnverified ) {
             throw(
-                type    = "bxAiSentinelOnnx.UnverifiedModel",
+                type    = "bxAISentinelONNX.UnverifiedModel",
                 message = "Model ""#variables.settings.modelName#"" has no pinned SHA-256 and auto-download is refused by default. Pass acceptUnverified=true in settings to override, or switch to ""manual"" mode and place the file yourself."
             );
         }
@@ -184,7 +184,7 @@ class singleton {
         var licenseStatus = meta.licenseStatus ?: "unverified";
         if ( licenseStatus == "unverified" && !variables.settings.acceptUnverifiedLicense ) {
             throw(
-                type    = "bxAiSentinelOnnx.UnverifiedLicense",
+                type    = "bxAISentinelONNX.UnverifiedLicense",
                 message = "Model ""#variables.settings.modelName#"" has licenseStatus=""unverified"" (" & ( meta.license ?: "unknown" ) & "). Auto-download is refused by default. Pass acceptUnverifiedLicense=true in settings to override, or use a different model."
             );
         }
@@ -198,7 +198,7 @@ class singleton {
         if ( !fileExists( resolveModelPath() ) ) {
             var src = len( variables.settings.modelSource ) ? variables.settings.modelSource : ( meta.modelSource ?: "" );
             if ( !len( src ) ) {
-                throw( type = "bxAiSentinelOnnx.NoSource", message = "No modelSource URL for " & variables.settings.modelName );
+                throw( type = "bxAISentinelONNX.NoSource", message = "No modelSource URL for " & variables.settings.modelName );
             }
             _downloadFile( src, resolveModelPath() );
         }
@@ -206,7 +206,7 @@ class singleton {
         if ( !fileExists( resolveTokenizerPath() ) ) {
             var srcT = len( variables.settings.tokenizerSource ) ? variables.settings.tokenizerSource : ( meta.tokenizerSource ?: "" );
             if ( !len( srcT ) ) {
-                throw( type = "bxAiSentinelOnnx.NoSource", message = "No tokenizerSource URL for " & variables.settings.modelName );
+                throw( type = "bxAISentinelONNX.NoSource", message = "No tokenizerSource URL for " & variables.settings.modelName );
             }
             _downloadFile( srcT, resolveTokenizerPath() );
         }
@@ -215,7 +215,7 @@ class singleton {
         var after = validate();
         if ( !after.ok ) {
             throw(
-                type    = "bxAiSentinelOnnx.PostDownloadValidationFailed",
+                type    = "bxAISentinelONNX.PostDownloadValidationFailed",
                 message = "Download completed but validation still failed: " & after.message
             );
         }
@@ -295,14 +295,14 @@ class singleton {
             );
         } catch ( any e ) {
             throw(
-                type    = "bxAiSentinelOnnx.DownloadFailed",
+                type    = "bxAISentinelONNX.DownloadFailed",
                 message = "HTTP request failed for " & arguments.url & ": " & ( e.message ?: "unknown" )
             );
         }
 
         if ( !fileExists( arguments.destPath ) ) {
             throw(
-                type    = "bxAiSentinelOnnx.DownloadFailed",
+                type    = "bxAISentinelONNX.DownloadFailed",
                 message = "Download of " & arguments.url & " did not produce a file at " & arguments.destPath & ". Status: " & ( local.resp.statusCode ?: "?" )
             );
         }

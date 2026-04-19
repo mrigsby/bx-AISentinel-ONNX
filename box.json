@@ -1,7 +1,7 @@
 {
     "name"        : "bx-AISentinel-ONNX",
     "slug"        : "bx-aisentinel-onnx",
-    "version"     : "0.4.0-pre",
+    "version"     : "0.4.1-pre",
     "author"      : "Ortus Solutions, Corp",
     "location"    : "forgeboxStorage",
     "homepage"    : "https://github.com/mrigsby/bx-AISentinel-ONNX",

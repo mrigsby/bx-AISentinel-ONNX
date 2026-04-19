@@ -17,7 +17,7 @@ class extends="testbox.system.BaseSpec" {
         describe( "OnnxNerDetector — IDetector@1.0.0 contract surface", function() {
 
             it( "exposes the required contract methods", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                var d = new bxAISentinelONNX.models.OnnxNerDetector();
                 expect( d ).toHaveKey( "scan" );
                 expect( d ).toHaveKey( "getPriority" );
                 expect( d ).toHaveKey( "getSourceName" );
@@ -25,17 +25,17 @@ class extends="testbox.system.BaseSpec" {
             } );
 
             it( "declares contract version 1.0.0", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                var d = new bxAISentinelONNX.models.OnnxNerDetector();
                 expect( d.getContractVersion() ).toBe( "1.0.0" );
             } );
 
             it( "reports its source name as OnnxNerDetector", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                var d = new bxAISentinelONNX.models.OnnxNerDetector();
                 expect( d.getSourceName() ).toBe( "OnnxNerDetector" );
             } );
 
             it( "reports a positive numeric priority", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                var d = new bxAISentinelONNX.models.OnnxNerDetector();
                 expect( d.getPriority() ).toBeGT( 0 );
             } );
 
@@ -44,25 +44,25 @@ class extends="testbox.system.BaseSpec" {
         describe( "OnnxNerDetector.scan — no assets present (default state)", function() {
 
             it( "returns an empty array when modelPath is unset", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                var d = new bxAISentinelONNX.models.OnnxNerDetector();
                 expect( d.scan( "Alice Martinez lives in Madrid." ) ).toHaveLength( 0 );
             } );
 
             it( "returns an empty array when modelPath is a missing directory", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "modelPath" : "/nope/does/not/exist/"
                 } );
                 expect( d.scan( "random text" ) ).toHaveLength( 0 );
             } );
 
             it( "handles empty input without throwing", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector();
+                var d = new bxAISentinelONNX.models.OnnxNerDetector();
                 expect( d.scan( "" ) ).toHaveLength( 0 );
             } );
 
             it( "returns empty when session reports not-loaded (injected mock)", function() {
                 var session = new tests.specs.fixtures.MockOnnxSession( loaded = false );
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "session" : session
                 } );
                 expect( d.scan( "irrelevant" ) ).toHaveLength( 0 );
@@ -73,7 +73,7 @@ class extends="testbox.system.BaseSpec" {
         describe( "OnnxNerDetector.validateAssets", function() {
 
             it( "returns a struct aggregating assetManager + session status", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "modelPath" : "/fake/path/"
                 } );
                 var status = d.validateAssets();
@@ -89,7 +89,7 @@ class extends="testbox.system.BaseSpec" {
             } );
 
             it( "reports ok=false when assets are missing", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "modelPath" : "/fake/path/"
                 } );
                 var status = d.validateAssets();
@@ -106,7 +106,7 @@ class extends="testbox.system.BaseSpec" {
                 // else triggered ensureLoaded(). New contract: validateAssets
                 // reports state, never causes loading. To force load at
                 // construction, hosts pass eagerInit: true.
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "modelPath" : "/fake/path/",
                     "id2label"  : { 0: "O" },        // make assets-only ok possible
                     "session"   : new tests.specs.fixtures.MockOnnxSession( loaded = false )
@@ -119,7 +119,7 @@ class extends="testbox.system.BaseSpec" {
             } );
 
             it( "getLastScanError returns empty string when no scan has run", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "modelPath" : "/fake/path/"
                 } );
                 expect( d.getLastScanError() ).toBe( "" );
@@ -152,7 +152,7 @@ class extends="testbox.system.BaseSpec" {
                     loaded = true
                 );
 
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "session"  : session,
                     "id2label" : { 0: "O", 1: "B-PER", 2: "I-PER", 3: "O" },
                     "labelToSentinel" : { "PER": "PII_PERSON_NAME" }
@@ -176,7 +176,7 @@ class extends="testbox.system.BaseSpec" {
                     loaded = true
                 );
 
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "session"  : session,
                     "modelName": "not-in-registry",     // forces empty id2label default
                     "id2label" : {}
@@ -186,7 +186,7 @@ class extends="testbox.system.BaseSpec" {
 
             it( "auto-populates id2label + labelToSentinel from SupportedModels when modelName is registered", function() {
                 // piiranha-pii-v1 has a full BIO id2label in the registry.
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "modelName" : "piiranha-pii-v1",
                     "modelPath" : "/fake/unused/",   // we don't scan, just inspect the resolved maps
                     "session"   : new tests.specs.fixtures.MockOnnxSession( loaded = false )
@@ -210,7 +210,7 @@ class extends="testbox.system.BaseSpec" {
                     loaded = true
                 );
 
-                var d2 = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d2 = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "modelName" : "piiranha-pii-v1",
                     "session"   : sess
                 } );
@@ -272,7 +272,7 @@ class extends="testbox.system.BaseSpec" {
             // the ONNX Runtime + tokenizer JARs are placed in lib/ AND a model is
             // downloaded to the configured assets directory. Otherwise skipped.
             it( "scans free-form PII through the real GLiNER / Piiranha model", function() {
-                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                var d = new bxAISentinelONNX.models.OnnxNerDetector( settings: {
                     "modelName" : "piiranha-pii-v1",
                     "modelPath" : "./assets/piiranha-pii-v1/",
                     "eagerInit" : true
@@ -392,10 +392,10 @@ class extends="testbox.system.BaseSpec" {
             loaded = true
         );
 
-        var fakeDecoder = prepareMock( new bxAiSentinelOnnx.models.EntityDecoder() );
+        var fakeDecoder = prepareMock( new bxAISentinelONNX.models.EntityDecoder() );
         fakeDecoder.$( "decode", arguments.hits );
 
-        return new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+        return new bxAISentinelONNX.models.OnnxNerDetector( settings: {
             "session"         : mockSession,
             "decoder"         : fakeDecoder,
             "id2label"        : { 0: "O" },

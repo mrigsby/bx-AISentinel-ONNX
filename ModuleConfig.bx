@@ -10,18 +10,27 @@
  */
 class {
 
-    property name="moduleVersion" default="0.4.0-pre";
+    property name="moduleVersion" default="0.4.1-pre";
 
-    // Explicit name so the WireBox ID stays `OnnxNerDetector@bx-AISentinel-ONNX`
-    // regardless of the install directory's case.
-    this.name           = "bx-AISentinel-ONNX";
+    // `this.name` is intentionally NOT set — ColdBox falls back to the install
+    // directory name (`bx-AISentinel-ONNX`, matching the GitHub repo + box.json
+    // `name`), which is exactly what we'd hardcode anyway. Matches the core
+    // bx-AISentinel module's pattern.
+    //
+    // The WireBox `Class@<suffix>` resolution ID is controlled by
+    // `this.cfmapping`, NOT by `this.name` or the install dir (verified
+    // empirically 2026-04-19 — see DEV-NOTES/discovery-log.md "Cross-module
+    // resolution"). Dashes in module names break WireBox's @-parser, so the
+    // cfmapping must be a clean alphanumeric identifier. Keep cfmapping and
+    // modelNamespace identical so test imports + production lookups use the
+    // same string.
     this.title          = "BX AI Sentinel — ONNX NER Detector";
     this.author         = "Ortus Solutions, Corp";
     this.webURL         = "https://github.com/mrigsby/bx-AISentinel-ONNX";
     this.description    = "ONNX Runtime + GLiNER-backed Tier 1 NER PII detector for bx-AISentinel.";
-    this.version        = "0.4.0-pre";
-    this.cfmapping      = "bxAiSentinelOnnx";
-    this.modelNamespace = "bxaisentinelonnx";
+    this.version        = "0.4.1-pre";
+    this.cfmapping      = "bxAISentinelONNX";
+    this.modelNamespace = "bxAISentinelONNX";
     this.autoMapModels  = true;
 
     // cbjavaloader must load BEFORE this module so `loader@cbjavaloader` is

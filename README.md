@@ -2,13 +2,15 @@
 
 > Tier 1 NER-based PII detection for [bx-AISentinel](https://github.com/mrigsby/bx-AISentinel). Plugs into the sentinel's external-detector plugin seam and catches free-form PII that regex / entropy / registry miss.
 
-**Status:** v0.4.0-pre · end-to-end verified against real Piiranha model · [Changelog](CHANGELOG.md)
+**Status:** v0.4.1-pre · end-to-end verified against real Piiranha model · [Changelog](CHANGELOG.md)
+
+> 🆔 **WireBox resolution ID:** `OnnxNerDetector@bxAISentinelONNX` (note the cfmapping casing, not the dashed module name). Use this exact form in `boxlang.json → modules.bx-aisentinel.externalDetectors`. The dashed `bx-AISentinel-ONNX` form does NOT resolve — WireBox's `Class@Module` parser uses `this.cfmapping`, not `this.name`. See `DEV-NOTES/discovery-log.md` "Cross-module resolution" for the empirical findings.
 
 ## What this is
 
 A standalone ColdBox module that implements the [`IDetector@1.0.0` contract](https://github.com/mrigsby/bx-AISentinel/blob/main/models/detectors/CONTRACT.md). Install both this module and `bx-AISentinel`, place the ONNX Runtime JARs and a supported model on disk, and the sentinel automatically picks up contextual PII — names, addresses, phone numbers, medical record numbers, institutional IDs — alongside the formatted secrets its built-in regex catalog already catches.
 
-The detector is also useful outside the sentinel. Any BoxLang code can call `getInstance( "OnnxNerDetector@bx-AISentinel-ONNX" ).scan( text )` (or the convenience `extractEntities` / `containsPii` / `redactInline` helpers) for log sanitization, form validation, or chat-input moderation — no middleware required.
+The detector is also useful outside the sentinel. Any BoxLang code can call `getInstance( "OnnxNerDetector@bxAISentinelONNX" ).scan( text )` (or the convenience `extractEntities` / `containsPii` / `redactInline` helpers) for log sanitization, form validation, or chat-input moderation — no middleware required.
 
 ## Install
 
@@ -78,7 +80,7 @@ Once both modules are installed and assets are in place, opt the detector into t
     "modules": {
         "bx-aisentinel": {
             "externalDetectors": [
-                "OnnxNerDetector@bx-AISentinel-ONNX"
+                "OnnxNerDetector@bxAISentinelONNX"
             ]
         },
         "bx-aisentinel-onnx": {
@@ -95,7 +97,7 @@ That's it. From now on every `aiAgent()` with `bx-AISentinel` wired in the middl
 ## Use directly (no sentinel)
 
 ```javascript
-var detector = getInstance( "OnnxNerDetector@bx-AISentinel-ONNX" );
+var detector = getInstance( "OnnxNerDetector@bxAISentinelONNX" );
 
 var hits = detector.scan( "Alice Martinez, born 1982-03-14, lives at 742 Evergreen Terrace." );
 // → [
@@ -183,7 +185,7 @@ The detector lazy-loads by default (`eagerInit = false`) so a host app that neve
 ## Health check
 
 ```javascript
-var status = getInstance( "OnnxNerDetector@bx-AISentinel-ONNX" ).validateAssets();
+var status = getInstance( "OnnxNerDetector@bxAISentinelONNX" ).validateAssets();
 // → {
 //     ok            : false,           // assets present + label map populated
 //     sessionLoaded : false,           // current session lifecycle state (lazy by default)

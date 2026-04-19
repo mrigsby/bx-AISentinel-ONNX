@@ -5,14 +5,14 @@
  *
  * Set `downloadAction` to one of:
  *   - `"write"` (default) — write `downloadContent` to the destination path
- *   - `"fail"` — throw `bxAiSentinelOnnx.DownloadFailed`
+ *   - `"fail"` — throw `bxAISentinelONNX.DownloadFailed`
  *   - `"noop"` — return without writing (simulates a successful HTTP call
  *                that produced no file, triggers PostDownloadValidation)
  *
  * `downloadCalls` is a public running count so specs can assert invocation
  * counts without reaching into MockBox internals.
  */
-class extends="bxAiSentinelOnnx.models.ModelAssetManager" {
+class extends="bxAISentinelONNX.models.ModelAssetManager" {
 
     property name="downloadAction"  type="string" default="write";
     property name="downloadContent" type="string" default="downloaded-content-for-test";
@@ -43,7 +43,7 @@ class extends="bxAiSentinelOnnx.models.ModelAssetManager" {
         variables.downloadCalls = variables.downloadCalls + 1;
 
         if ( variables.downloadAction == "fail" ) {
-            throw( type: "bxAiSentinelOnnx.DownloadFailed", message: "simulated network failure" );
+            throw( type: "bxAISentinelONNX.DownloadFailed", message: "simulated network failure" );
         }
         if ( variables.downloadAction == "noop" ) {
             return;

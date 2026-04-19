@@ -412,7 +412,7 @@ class extends="testbox.system.BaseSpec" {
                  string  sourceName      = "OnnxNerDetector",
                  numeric confidenceFloor = 0.5
     ) {
-        return new bxAiSentinelOnnx.models.EntityDecoder(
+        return new bxAISentinelONNX.models.EntityDecoder(
             category        : arguments.category,
             priority        : arguments.priority,
             sourceName      : arguments.sourceName,

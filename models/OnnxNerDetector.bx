@@ -33,11 +33,13 @@ class {
     property name="assetManager"    type="any";
     property name="id2label"        type="struct";
     property name="labelToSentinel" type="struct";
+    property name="lastScanError"   type="string"  default="";
 
     function init( struct settings = {} ) {
         variables.priority        = 2;
         variables.sourceName      = "OnnxNerDetector";
         variables.contractVersion = "1.0.0";
+        variables.lastScanError   = "";
 
         // Pull the module's own ColdBox settings as defaults (host apps
         // configure the detector via `.boxlang.json → modules.bx-aisentinel-onnx`,
@@ -141,20 +143,31 @@ class {
         try {
             var tokens = variables.session.tokenize( arguments.text );
             var logits = variables.session.runInference( tokens.inputIds, tokens.attentionMask );
-
-            return variables.decoder.decode(
+            var hits = variables.decoder.decode(
                 logits          : _normalizeLogits( logits ),
                 offsetMapping   : tokens.offsetMapping,
                 sourceText      : arguments.text,
                 id2label        : variables.id2label,
                 labelToSentinel : variables.labelToSentinel
             );
+            // Successful scan clears any cached error from a prior failure.
+            variables.lastScanError = "";
+            return hits;
         }
         catch ( any e ) {
+            // Graceful degradation: caller still gets [] so the sentinel's
+            // pipeline doesn't fall over. But we stash the error on
+            // `lastScanError` so callers / health checks / `validateAssets()`
+            // can see exactly what went wrong instead of inferring from a
+            // silent empty array. This is the lesson from the v0.3.x
+            // debugging arc — silent catches cost hours.
+            variables.lastScanError = ( e.message ?: "unknown" )
+                & ( len( e.detail ?: "" ) ? " — " & e.detail : "" )
+                & " [" & ( e.type ?: "exception" ) & "]";
             writeLog(
                 type = "error",
                 file = "bx-aisentinel-onnx",
-                text = "OnnxNerDetector.scan failed: " & ( e.message ?: "unknown" )
+                text = "OnnxNerDetector.scan failed: " & variables.lastScanError
             );
             return [];
         }
@@ -163,6 +176,14 @@ class {
     numeric function getPriority()        { return variables.priority; }
     string  function getSourceName()      { return variables.sourceName; }
     string  function getContractVersion() { return variables.contractVersion; }
+
+    /**
+     * Last error caught inside `scan()`. Empty string when the most recent
+     * scan succeeded (or no scan has run yet). Useful for health-check
+     * endpoints to distinguish "no PII detected" from "detector crashed
+     * silently" — both return `[]` from `scan()`.
+     */
+    string function getLastScanError() { return variables.lastScanError; }
 
     // ─── Convenience API (use this anywhere, sentinel not required) ──────
 
@@ -220,12 +241,32 @@ class {
     /**
      * Surface the asset + session status for host health checks and the
      * `download-model` task.
+     *
+     * Return shape (v0.4.0+):
+     *   - `ok` — assets present + paths valid + label map populated. Means
+     *     "the detector CAN load on first scan", NOT "is currently loaded".
+     *   - `sessionLoaded` — current session lifecycle state. Lazy by default;
+     *     `true` only after the first `scan()` or when `eagerInit: true`.
+     *   - `lastScanError` — last error caught by `scan()`, "" if no failure.
+     *   - `assetManager` / `session` — full sub-status structs (unchanged).
+     *
+     * NO SIDE EFFECTS. This call does NOT trigger model loading — that would
+     * defeat the lazy-init contract and surprise health endpoints with
+     * 5-second cold-starts. To force load at construction, pass
+     * `eagerInit: true` in settings.
+     *
+     * Prior versions' `ok` field required `session.loaded == true`, which
+     * made the field structurally `false` for any fresh detector — broken
+     * as a health check. Hosts surfacing the prior shape need to read
+     * `sessionLoaded` separately (or rely on the new `ok` semantics).
      */
     struct function validateAssets() {
         var assetStatus   = variables.assetManager.validate();
         var sessionStatus = variables.session.getStatus();
         return {
-            "ok"              : assetStatus.ok && sessionStatus.loaded,
+            "ok"              : assetStatus.ok && structCount( variables.id2label ) > 0,
+            "sessionLoaded"   : sessionStatus.loaded,
+            "lastScanError"   : variables.lastScanError,
             "assetManager"    : assetStatus,
             "session"         : sessionStatus
         };
@@ -241,14 +282,19 @@ class {
     // ─── internals ───────────────────────────────────────────────────────
 
     /**
-     * ONNX Runtime returns nested Java arrays. Normalize into a BoxLang 2-D
-     * array so EntityDecoder sees a clean shape.
+     * ONNX NER models return logits with shape [batch, seqLen, numLabels].
+     * We always run with batch=1, so peel that outer dimension off and
+     * convert the inner Java float[][] into a clean BoxLang 2-D array of
+     * [seqLen][numLabels] for downstream argmax / decode.
      */
     private array function _normalizeLogits( required any raw ) {
-        var rows = [];
-        var outer = arrayLen( arguments.raw );
+        // Peel batch dimension. arguments.raw is float[1][seqLen][numLabels];
+        // batch is float[seqLen][numLabels].
+        var batch = arguments.raw[ 1 ];
+        var rows  = [];
+        var outer = arrayLen( batch );
         for ( var i = 1; i <= outer; i++ ) {
-            var rawRow = arguments.raw[ i ];
+            var rawRow = batch[ i ];
             var row    = [];
             var inner  = arrayLen( rawRow );
             for ( var j = 1; j <= inner; j++ ) {

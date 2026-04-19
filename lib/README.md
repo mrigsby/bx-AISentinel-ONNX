@@ -8,11 +8,13 @@ This directory holds the Java libraries the module loads via [cbjavaloader](http
 |---|---|---|
 | `onnxruntime-<version>.jar` | [Maven — com.microsoft.onnxruntime:onnxruntime](https://mvnrepository.com/artifact/com.microsoft.onnxruntime/onnxruntime) | ONNX Runtime Java binding. Single monolithic JAR bundles native libs for linux-x64, macos-arm64, macos-x64, windows-x64; the JVM extracts the right one at first use. |
 | `tokenizers-<version>.jar` | [Maven — ai.djl.huggingface:tokenizers](https://mvnrepository.com/artifact/ai.djl.huggingface/tokenizers) | DJL's HuggingFace tokenizer wrapper. Also a single JAR with bundled native binaries. |
+| `api-<version>.jar` | [Maven — ai.djl:api](https://mvnrepository.com/artifact/ai.djl/api) | DJL core API. Required transitive dependency of `tokenizers`. Without it, the JVM fails with `NoClassDefFoundError: ai/djl/modality/nlp/preprocess/Tokenizer` at first tokenizer construction. Match the version to the `tokenizers` version. |
 
 **Known-working versions** (current as of publication):
 
 - `onnxruntime`: **1.22.0** (latest stable non-android release). Newer releases should work; if you hit a macOS Apple Silicon native-lib-loader issue on an older release, bump to the latest.
 - `tokenizers`: **0.36.0**.
+- `api`: **0.36.0** (must match the `tokenizers` version).
 
 Pick the current release on Maven Central — the links in the table above go to the version listings. If a newer version exists by the time you read this, use it.
 
@@ -28,9 +30,11 @@ curl -L -o lib/onnxruntime-1.22.0.jar \
   https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime/1.22.0/onnxruntime-1.22.0.jar
 curl -L -o lib/tokenizers-0.36.0.jar \
   https://repo1.maven.org/maven2/ai/djl/huggingface/tokenizers/0.36.0/tokenizers-0.36.0.jar
+curl -L -o lib/api-0.36.0.jar \
+  https://repo1.maven.org/maven2/ai/djl/api/0.36.0/api-0.36.0.jar
 ```
 
-Swap the version numbers for whatever the current Maven Central releases are when you run this.
+Swap the version numbers for whatever the current Maven Central releases are when you run this. Keep the `api` and `tokenizers` versions in sync.
 
 ### Option 2 — manual browser download
 
@@ -46,11 +50,11 @@ If several projects on the same host need these libs, place them in a shared dir
 
 After placing the JARs, start the server. The module's `onLoad()` logs to the `bx-aisentinel-onnx` LogBox channel:
 
-```
-cbjavaloader appended …/lib (2 JAR(s) found)
+```text
+cbjavaloader appended …/lib (3 JAR(s) found)
 ```
 
-If that line says `0 JAR(s) found` or the log complains about `lib/` being missing, the JARs haven't been placed correctly.
+If that line says `0 JAR(s) found` or the log complains about `lib/` being missing, the JARs haven't been placed correctly. If JARs are present but you see `NoClassDefFoundError: ai/djl/modality/nlp/preprocess/Tokenizer` at first scan, you're missing `api-*.jar`.
 
 ## Why not checked in
 

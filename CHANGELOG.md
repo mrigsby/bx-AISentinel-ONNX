@@ -6,6 +6,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.4.0-pre] - 2026-04-19
+
+First release with the full pipeline verified end-to-end against a real model. The `v0.3.x` line declared itself "functional with real assets" — but no one had actually run a real-model integration against it. This release is the product of doing that, which surfaced eight real bugs across `OnnxSession`, `OnnxNerDetector`, `EntityDecoder`, and `SupportedModels`. Every one is fixed; every fix is covered by a unit spec; the `real-model` gated spec asserts structural correctness of entity labels, values, and positions rather than just `arrayLen > 0`.
+
+### Fixed
+
+- **`OnnxSession.tokenize`** — DJL's `Encoding.getCharTokenSpans()` returns `null` `CharSpan` entries for special tokens (CLS, SEP, padding, added tokens) that don't correspond to source-text characters. The prior code called `.getStart()` unconditionally, causing an NPE on every real-model scan. Null entries now map to the `[0,0]` sentinel the decoder skips.
+- **`OnnxSession.ensureLoaded`** — `HuggingFaceTokenizer.newInstance(String)` treats its String argument as a HuggingFace model identifier and tries to download it from `huggingface.co`. For local files you MUST pass a `java.nio.file.Path` to hit the disk-loading overload. Prior code always took the network path for any configured `tokenizerPath`, failing with `404` errors referencing a URL cobbled together from the local path string.
+- **`OnnxSession.runInference`** — `OrtSession.run(Map<String, OnnxTensor>)` expects native `String` keys. A BoxLang struct literal `{ "k": v }` is keyed by `ortus.boxlang.runtime.scopes.Key`, so ONNX Runtime's internal iteration fails with `ClassCastException: ortus.boxlang.runtime.scopes.Key cannot be cast to java.lang.String`. Inputs are now built as a real `java.util.HashMap` with `javaCast("string", ...)` keys.
+- **`OnnxNerDetector._normalizeLogits`** — ONNX NER models return logits with shape `[batch, seqLen, numLabels]`. Single-sentence inputs always have `batch=1`, but the dimension is still there. Prior code did not peel batch, so downstream argmax saw each row as `float[][]` and crashed with `Can't compare [float[]] against [float[]]`. Batch dimension is now peeled explicitly.
+- **`EntityDecoder` state machine** — now supports pure-IO tagging (no B- prefix). Piiranha (verified via its `config.json`) uses `I-LABEL` exclusively for entities; prior BIO-strict decoder never opened a span and returned zero hits for any pure-IO model. The decoder now treats `I-LABEL` as opening a new span when no matching span is open, preserving existing BIO semantics (B- always opens, matching I- extends).
+- **`EntityDecoder._flushHit` offset translation** — DJL/HuggingFace emits 0-based char offsets with exclusive end; CFML/BoxLang `mid(string, start, count)` is 1-based with inclusive count. Prior code passed DJL offsets straight through, producing hit values that were shifted left by one character (`"Alice "` instead of `"Alice"`, `"e Martinez"` instead of `" Martinez"`). Offsets now translate at the decoder boundary so consumers see consistent 1-based positions.
+- **`EntityDecoder._flushHit` whitespace trimming** — SentencePiece-based tokenizers (mdeberta-v3, XLM-R, etc.) encode word boundaries as part of the token, so non-first-content tokens arrive with leading whitespace in the offset. Prior code kept the whitespace in the hit value, which would have produced `"lives at⟦TOKEN⟧"` with no separator when the sentinel redacts. Leading + trailing whitespace is now trimmed and start/end offsets adjust to match the trimmed bounds.
+- **`EntityDecoder._argmax` confidence scoring** — ONNX outputs raw logits, not probabilities. A `confidenceFloor` of `0.5` compared against raw logits is a no-op (logits routinely sit at 5+ to 13+ for confident predictions), so prior versions effectively had no confidence filtering. `_argmax` now applies numerically-stable row-wise softmax and returns the winner's probability (0–1) as `confidence`.
+- **`SupportedModels` Piiranha registry entry** — completely rewritten against the model's actual `config.json`. Prior entry assumed BIO tagging with 19 labels and `O` at index 0; reality is pure-IO with 18 labels and `O` at index 17. Every other label index was off — idx 17, which we thought was `B-ZIPCODE`, is actually `O`. Result was that every non-entity token the model correctly predicted as `O` got decoded as `PII_ADDRESS` with high confidence. Registry entry now matches the model card; `labelToSentinel` expanded to cover all 17 entity types the model recognizes (added `ACCOUNTNUM`, `BUILDINGNUM`, `CREDITCARDNUMBER`, `DRIVERLICENSENUM`, `IDCARDNUM`, `PASSWORD`, `TAXNUM`, `USERNAME`). `decoderStrategy` field changed from `"bio"` to `"io"`.
+
+### Changed
+
+- **`OnnxNerDetector.validateAssets()` return shape** — `ok` no longer requires `session.loaded == true`. The prior behavior made `ok` structurally `false` for any fresh detector until something else triggered `ensureLoaded()` (sessions are lazy-init by default). New `ok` means "assets present + paths valid + label map populated" — i.e. "the detector CAN load on first scan." Two new fields surface the orthogonal state: `sessionLoaded` (current lifecycle state) and `lastScanError` (last error caught by `scan()`, empty when clean). `validateAssets()` itself has NO side effects — it never triggers a model load, so health endpoints calling it don't absorb 5-second cold starts. Hosts wanting forced load at construction pass `eagerInit: true`.
+- **`OnnxNerDetector.scan()` error handling** — the `try/catch` still swallows exceptions (graceful degradation is the documented contract), but the caught error is now stashed on `lastScanError` and exposed via the new `getLastScanError()` method. Successful scans clear the cached error. Callers that previously couldn't distinguish "no PII detected" from "detector crashed silently" can now see exactly what went wrong. Log channel output is unchanged.
+- **DJL JAR dependency set** — install instructions now document THREE required JARs in `lib/` instead of two. The `ai.djl.huggingface:tokenizers` extension JAR is not self-contained; it depends on `ai.djl:api` for the base `Tokenizer` interface. Without `api-*.jar`, the JVM fails with `NoClassDefFoundError: ai/djl/modality/nlp/preprocess/Tokenizer` at first tokenizer construction. `lib/README.md` and main README updated.
+
+### Added
+
+- **`OnnxNerDetector.getLastScanError()`** — public getter for the cached error state described above. Returns `""` when no scan has run or the most recent scan succeeded.
+- **`EntityDecoderSpec`** — new coverage for IO-tagging (`I-LABEL` as opener + adjacent-same-label merge) and SentencePiece leading-whitespace trim. Existing BIO specs retained and updated to the new 0-based-exclusive offset convention + raw-logit values.
+- **`OnnxNerDetectorSpec`** — new assertions on `validateAssets()` v0.4.0+ shape (`sessionLoaded`, `lastScanError`) and a "validateAssets has no side effects" spec that locks in the lazy-init contract. Existing full-pipeline mock spec updated to the new conventions.
+- **`MockOnnxSession.runInference`** now wraps logits in a batch dimension so mock fixtures match real ONNX output shape. Spec authors still construct clean 2-D `[seqLen][numLabels]` arrays; the wrap is invisible.
+- **DEV-NOTES discovery log** enriched with the full lessons from this debugging arc — tokenizer quirks, Java↔BoxLang interop gotchas, ONNX shape conventions, TestBox fixture patterns, and a chronological session summary. File is gitignored but persists for future maintainers and the eventual DJL sibling module.
+
+### Removed
+
+- **`OnnxNerDetector._diagnoseScan`** and its private helpers (`_firstN`, `_lastN`, `_allOffsetsZero`, `_argmaxRows`) — introduced temporarily during the v0.3.3→v0.4.0 debugging arc to surface intermediate pipeline state when `scan()`'s `try/catch` was swallowing exceptions. With the `lastScanError` stash in place, the diagnostic method is no longer needed. Removed to keep the module surface tight. If a future debug session needs similar introspection, re-add it as scoped temporary code rather than shipping it permanently.
+
+### Migration notes for v0.3.x hosts
+
+- Hosts that read `validateAssets().ok` to mean "detector is fully loaded and ready" should switch to checking `sessionLoaded` for that semantic. The new `ok` means assets + config are in order — a weaker but more useful guarantee for health checks.
+- Hosts that encountered `scan() → []` with no way to distinguish "no matches" from "caught exception" should now inspect `getLastScanError()` or `validateAssets().lastScanError`.
+- Hosts that downloaded only `onnxruntime-*.jar` + `tokenizers-*.jar` into `lib/` need to also place `api-*.jar` (matching the `tokenizers` version). Without it, the first scan fails with `NoClassDefFoundError` even when the registered paths look fine.
+
 ## [0.3.3-pre] - 2026-04-18
 
 ### Fixed

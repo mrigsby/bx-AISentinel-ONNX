@@ -16,6 +16,17 @@ class {
     this.mappings[ "/bxAiSentinelOnnx" ] = expandPath( "../" );
     this.mappings[ "/tests" ]            = expandPath( "./" );
 
+    // Load the module's lib/ JARs (ONNX Runtime + HuggingFace tokenizer) into the
+    // JVM at application boot. The production runtime path goes through
+    // ModuleConfig.onLoad() → cbjavaloader, but this harness is a bare BoxLang
+    // app with no ColdBox / cbjavaloader, so we use BoxLang's native
+    // javaSettings.loadPaths instead. Without this, OnnxSession.ensureLoaded()
+    // fails with "ai.onnxruntime.OrtEnvironment not located in the [java] resolver".
+    this.javaSettings = {
+        loadPaths       : [ expandPath( "../lib" ) ],
+        reloadOnChange  : false
+    };
+
     // TestBox installed locally by `box install` into tests/testbox/
     if ( directoryExists( expandPath( "./testbox" ) ) ) {
         this.mappings[ "/testbox" ] = expandPath( "./testbox" );

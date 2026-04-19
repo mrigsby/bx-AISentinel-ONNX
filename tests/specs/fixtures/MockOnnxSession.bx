@@ -31,7 +31,13 @@ class {
     }
 
     array function runInference( required array inputIds, required array attentionMask ) {
-        return variables.logits;
+        // Wrap in batch dimension to match real ONNX Runtime output shape
+        // [batch=1, seqLen, numLabels]. OnnxNerDetector._normalizeLogits
+        // peels this dimension off, so the mock has to ship it for parity
+        // with production behavior. Specs continue to construct logits as
+        // a clean 2-D [seqLen][numLabels] array — the wrap is invisible
+        // to test authors.
+        return [ variables.logits ];
     }
 
     struct function getStatus() {

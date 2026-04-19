@@ -78,6 +78,8 @@ class extends="testbox.system.BaseSpec" {
                 } );
                 var status = d.validateAssets();
                 expect( status ).toHaveKey( "ok" );
+                expect( status ).toHaveKey( "sessionLoaded" );    // v0.4.0+
+                expect( status ).toHaveKey( "lastScanError" );    // v0.4.0+
                 expect( status ).toHaveKey( "assetManager" );
                 expect( status ).toHaveKey( "session" );
                 expect( status.assetManager ).toHaveKey( "ok" );
@@ -86,7 +88,7 @@ class extends="testbox.system.BaseSpec" {
                 expect( status.session ).toHaveKey( "loaded" );
             } );
 
-            it( "reports ok=false when assets are missing AND session is not loaded", function() {
+            it( "reports ok=false when assets are missing", function() {
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
                     "modelPath" : "/fake/path/"
                 } );
@@ -94,6 +96,33 @@ class extends="testbox.system.BaseSpec" {
                 expect( status.ok                   ).toBeFalse();
                 expect( status.assetManager.ok      ).toBeFalse();
                 expect( status.session.loaded       ).toBeFalse();
+                expect( status.sessionLoaded        ).toBeFalse();
+                expect( status.lastScanError        ).toBe( "" );
+            } );
+
+            it( "validateAssets has NO side effects — does NOT trigger model load", function() {
+                // Health-check guarantee: prior versions had `ok` require
+                // session.loaded, which was structurally false until something
+                // else triggered ensureLoaded(). New contract: validateAssets
+                // reports state, never causes loading. To force load at
+                // construction, hosts pass eagerInit: true.
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "modelPath" : "/fake/path/",
+                    "id2label"  : { 0: "O" },        // make assets-only ok possible
+                    "session"   : new tests.specs.fixtures.MockOnnxSession( loaded = false )
+                } );
+                d.validateAssets();
+                d.validateAssets();
+                d.validateAssets();
+                // sessionLoaded stays false across multiple validateAssets calls.
+                expect( d.validateAssets().sessionLoaded ).toBeFalse();
+            } );
+
+            it( "getLastScanError returns empty string when no scan has run", function() {
+                var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
+                    "modelPath" : "/fake/path/"
+                } );
+                expect( d.getLastScanError() ).toBe( "" );
             } );
 
         } );
@@ -101,17 +130,20 @@ class extends="testbox.system.BaseSpec" {
         describe( "OnnxNerDetector.scan — full pipeline with mock session", function() {
 
             it( "tokenizes, runs inference, and decodes into Sentinel Hit structs", function() {
+                // Offsets are 0-based with exclusive end (DJL/HF convention).
+                // Logits are RAW values that softmax to ~0.998 for the winner.
+                // See EntityDecoderSpec header for full conventions.
                 var fakeTokens = {
                     "inputIds"      : [ 101, 1850, 3342, 3623, 102 ],
                     "attentionMask" : [ 1, 1, 1, 1, 1 ],
-                    "offsetMapping" : [ [0,0], [1,5], [7,14], [16,20], [0,0] ]
+                    "offsetMapping" : [ [0,0], [0,5], [6,14], [15,20], [0,0] ]
                 };
                 var fakeLogits = [
-                    [ 0.9, 0.0, 0.0, 0.0 ],   // CLS
-                    [ 0.0, 0.9, 0.0, 0.0 ],   // B-PER
-                    [ 0.0, 0.0, 0.9, 0.0 ],   // I-PER
-                    [ 0.9, 0.0, 0.0, 0.0 ],   // O "lives"
-                    [ 0.9, 0.0, 0.0, 0.0 ]    // SEP
+                    [ 8.0, 0.0, 0.0, 0.0 ],   // CLS  → O
+                    [ 0.0, 8.0, 0.0, 0.0 ],   // B-PER
+                    [ 0.0, 0.0, 8.0, 0.0 ],   // I-PER
+                    [ 8.0, 0.0, 0.0, 0.0 ],   // O "lives"
+                    [ 8.0, 0.0, 0.0, 0.0 ]    // SEP  → O
                 ];
 
                 var session = new tests.specs.fixtures.MockOnnxSession(
@@ -135,9 +167,12 @@ class extends="testbox.system.BaseSpec" {
             } );
 
             it( "returns empty when id2label is empty AND caller didn't override it", function() {
+                // Logits / offsets here aren't actually decoded — empty id2label
+                // short-circuits scan() before normalization. Cleaned to match
+                // the new conventions for consistency with other specs.
                 var session = new tests.specs.fixtures.MockOnnxSession(
-                    tokens = { "inputIds": [101, 1850, 102], "attentionMask": [1,1,1], "offsetMapping": [[0,0],[1,5],[0,0]] },
-                    logits = [ [0.9, 0.0], [0.0, 0.9], [0.9, 0.0] ],
+                    tokens = { "inputIds": [101, 1850, 102], "attentionMask": [1,1,1], "offsetMapping": [[0,0],[0,5],[0,0]] },
+                    logits = [ [8.0, 0.0], [0.0, 8.0], [8.0, 0.0] ],
                     loaded = true
                 );
 
@@ -161,13 +196,16 @@ class extends="testbox.system.BaseSpec" {
                 // Indirect assertion: set the detector up with a mock session providing real
                 // Piiranha-shaped logits and confirm a hit comes through.
                 var sess = new tests.specs.fixtures.MockOnnxSession(
-                    tokens = { "inputIds": [101, 50, 51, 102], "attentionMask": [1,1,1,1], "offsetMapping": [[0,0],[1,5],[7,12],[0,0]] },
-                    // 19 labels (Piiranha schema): put "B-GIVENNAME"=1 and "I-GIVENNAME"=2 high
+                    tokens = { "inputIds": [101, 50, 51, 102], "attentionMask": [1,1,1,1], "offsetMapping": [[0,0],[0,5],[6,12],[0,0]] },
+                    // Real Piiranha schema (verified against config.json on
+                    // 2026-04-19): 18 labels, IO tagging only, "O" at index 17,
+                    // "I-GIVENNAME" at index 7. See SupportedModels.bx
+                    // piiranha-pii-v1 entry for the full id2label.
                     logits = [
-                        _oneHot( 19, 0 ),    // CLS O
-                        _oneHot( 19, 1 ),    // B-GIVENNAME
-                        _oneHot( 19, 2 ),    // I-GIVENNAME
-                        _oneHot( 19, 0 )     // SEP O
+                        _oneHot( 18, 17 ),   // CLS         → O
+                        _oneHot( 18,  7 ),   // I-GIVENNAME (opens)
+                        _oneHot( 18,  7 ),   // I-GIVENNAME (extends — IO adjacent merge)
+                        _oneHot( 18, 17 )    // SEP         → O (closes span)
                     ],
                     loaded = true
                 );
@@ -236,15 +274,57 @@ class extends="testbox.system.BaseSpec" {
             it( "scans free-form PII through the real GLiNER / Piiranha model", function() {
                 var d = new bxAiSentinelOnnx.models.OnnxNerDetector( settings: {
                     "modelName" : "piiranha-pii-v1",
-                    "modelPath" : "./assets/piiranha-pii-v1/"
+                    "modelPath" : "./assets/piiranha-pii-v1/",
+                    "eagerInit" : true
                 } );
-                if ( !d.validateAssets().ok ) {
+                var status = d.validateAssets();
+                if ( !status.ok ) {
                     // Intentionally skipped — see spec label. Pass as no-op so the
                     // suite stays green when real model isn't available.
                     return;
                 }
-                var hits = d.scan( "Alice Martinez was born on 1982-03-14 and lives at 742 Evergreen Terrace." );
-                expect( arrayLen( hits ) ).toBeGT( 0 );
+                // Test sentence covers Piiranha's RELIABLY-detected entity classes:
+                // SSN, credit card, phone. The prior sentences surfaced two
+                // documented model limitations (see DEV-NOTES/discovery-log.md):
+                //   1. English names in any prose context get tagged "O" with high
+                //      confidence — a Piiranha weakness that GLiNER (zero-shot)
+                //      would close. Tracked in 07-future-work.md.
+                //   2. Emails get fragmented across multiple label types
+                //      (sarah=I-EMAIL, johnson=I-USERNAME), so adjacent-merge breaks
+                //      and we get only the username portion. Same root cause —
+                //      Piiranha's label schema doesn't align cleanly with how email
+                //      addresses tokenize via SentencePiece.
+                // The spec below asserts only what Piiranha catches with high
+                // confidence. Adding GLiNER (or a different NER backend) is the
+                // path to closing the name + email gaps.
+                var sentence = "Contact Sarah Johnson at sarah.johnson@example.com or call 555-123-4567. Her SSN is 123-45-6789 and credit card is 4532-1234-5678-9010.";
+                var hits = d.scan( sentence );
+
+                // Sanity: at least *something* came back.
+                expect( arrayLen( hits ) ).toBeGT( 0, "Expected at least one hit, got zero." );
+
+                // Reliably-detected entities. Bidirectional substring matching
+                // means "555-123-4567" matches Piiranha's "555-123-4567." (model
+                // includes trailing sentence punctuation — known behavior).
+                _expectEntity( hits, "555-123-4567",             "PII_PHONE"        );
+                _expectEntity( hits, "123-45-6789",              "PII_SSN"          );
+                _expectEntity( hits, "4532-1234-5678-9010",      "PII_CREDIT_CARD"  );
+
+                // Negative assertion — pure prose tokens MUST NOT be tagged.
+                // Catches the inverted-id2label class of regression.
+                _expectNoEntityFor( hits, "Contact" );
+                _expectNoEntityFor( hits, "call"    );
+                _expectNoEntityFor( hits, "Her"     );
+
+                // Whitespace artifact regression — values must NOT have leading
+                // or trailing whitespace. SentencePiece encodes word boundaries
+                // into the token, so without an explicit trim in _flushHit, every
+                // non-first-content hit comes back as " value" instead of "value".
+                for ( var h in hits ) {
+                    expect( h.value ).notToMatch( "^\s|\s$",
+                        "Hit value '" & h.value & "' has leading or trailing whitespace — _flushHit trim is broken."
+                    );
+                }
             }, "real-model" );
 
         } );
@@ -252,6 +332,58 @@ class extends="testbox.system.BaseSpec" {
     }
 
     // ─── helpers ─────────────────────────────────────────────────────────
+
+    /**
+     * Assert that for the given expected substring + label, at least one hit
+     * exists where the substring overlaps the hit's value (in either direction)
+     * AND the hit's label matches. Bidirectional overlap so the spec works
+     * whether the model produces one wide hit covering the substring or several
+     * adjacent hits each covering a fragment of it (IO tagging often does the
+     * latter for multi-token entities).
+     */
+    private void function _expectEntity(
+        required array  hits,
+        required string substring,
+        required string expectedLabel
+    ) {
+        var matched = false;
+        for ( var h in arguments.hits ) {
+            if ( h.label != arguments.expectedLabel ) continue;
+            if (
+                find( arguments.substring, h.value ) > 0
+                || find( h.value, arguments.substring ) > 0
+            ) {
+                matched = true;
+                break;
+            }
+        }
+        expect( matched ).toBeTrue(
+            "Expected at least one hit with label=" & arguments.expectedLabel
+            & " covering substring='" & arguments.substring & "', but none matched. "
+            & "Got " & arrayLen( arguments.hits ) & " total hits — see DIAG dump above."
+        );
+    }
+
+    /**
+     * Assert that no hit's value overlaps the given prose token. This catches
+     * the inverted-label-map class of bugs where every "O" prediction
+     * mis-decodes to a real entity label.
+     */
+    private void function _expectNoEntityFor(
+        required array  hits,
+        required string proseToken
+    ) {
+        for ( var h in arguments.hits ) {
+            if ( find( arguments.proseToken, h.value ) > 0 ) {
+                fail(
+                    "Pure-prose token '" & arguments.proseToken & "' was tagged as "
+                    & h.label & " (value='" & h.value & "'). "
+                    & "Either the id2label map is wrong (most likely), the offset "
+                    & "slicing is wrong, or the confidence floor is too lenient."
+                );
+            }
+        }
+    }
 
     private any function _detectorWithMockHits( required array hits ) {
         var mockSession = new tests.specs.fixtures.MockOnnxSession(
@@ -290,9 +422,14 @@ class extends="testbox.system.BaseSpec" {
      * decoder output in the Piiranha auto-population test.
      */
     private array function _oneHot( required numeric numLabels, required numeric hotIndex ) {
+        // RAW LOGITS, not probabilities. EntityDecoder applies softmax
+        // internally before comparing to confidenceFloor. With 18+ labels,
+        // a "0.9 vs 0.01" row softmaxes to ~0.12 — below the default 0.5
+        // floor, so every hit gets dropped. Use 8.0 vs 0.0 for the
+        // winner-vs-loser pattern; softmax of the winner is ~0.998.
         var row = [];
         for ( var i = 0; i < arguments.numLabels; i++ ) {
-            row.append( i == arguments.hotIndex ? 0.9 : 0.01 );
+            row.append( i == arguments.hotIndex ? 8.0 : 0.0 );
         }
         return row;
     }

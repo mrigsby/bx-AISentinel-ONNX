@@ -2,7 +2,7 @@
 
 > Tier 1 NER-based PII detection for [bx-AISentinel](https://github.com/mrigsby/bx-AISentinel). Plugs into the sentinel's external-detector plugin seam and catches free-form PII that regex / entropy / registry miss.
 
-**Status:** v0.3.3-pre · functional with real assets · [Changelog](CHANGELOG.md)
+**Status:** v0.4.0-pre · end-to-end verified against real Piiranha model · [Changelog](CHANGELOG.md)
 
 ## What this is
 
@@ -32,9 +32,12 @@ curl -L -o lib/onnxruntime-1.22.0.jar \
   https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime/1.22.0/onnxruntime-1.22.0.jar
 curl -L -o lib/tokenizers-0.36.0.jar \
   https://repo1.maven.org/maven2/ai/djl/huggingface/tokenizers/0.36.0/tokenizers-0.36.0.jar
+curl -L -o lib/api-0.36.0.jar \
+  https://repo1.maven.org/maven2/ai/djl/api/0.36.0/api-0.36.0.jar
 
 # Option 2 — manual browser download from Maven Central
-# Drop onnxruntime-*.jar + tokenizers-*.jar into lib/ by hand.
+# Drop all THREE JARs (onnxruntime-*.jar, tokenizers-*.jar, api-*.jar) into lib/
+# by hand. The api JAR is a transitive dep of tokenizers — required.
 
 # Option 3 — shared system location
 # Place JARs anywhere and override ModuleConfig's lib loader path.
@@ -182,36 +185,42 @@ The detector lazy-loads by default (`eagerInit = false`) so a host app that neve
 ```javascript
 var status = getInstance( "OnnxNerDetector@bx-AISentinel-ONNX" ).validateAssets();
 // → {
-//     ok: false,
-//     assetManager: {
-//         ok: false,
-//         mode: "manual",
-//         modelName: "gliner-pii-v1",
-//         modelFile: "...",
-//         missingFiles: [ "..." ],
+//     ok            : false,           // assets present + label map populated
+//     sessionLoaded : false,           // current session lifecycle state (lazy by default)
+//     lastScanError : "",              // last error caught by scan(); "" if none
+//     assetManager  : {
+//         ok           : false,
+//         mode         : "manual",
+//         modelName    : "gliner-pii-v1",
+//         modelFile    : "...",
+//         missingFiles : [ "..." ],
 //         licenseStatus: "verified",
-//         message: "Missing asset file(s) at ..."
+//         message      : "Missing asset file(s) at ..."
 //     },
-//     session: {
-//         loaded: false,
-//         modelPath: "...",
-//         loadError: ""
+//     session       : {
+//         loaded       : false,
+//         modelPath    : "...",
+//         loadError    : ""
 //     }
 //   }
 ```
 
 Surface this from a host health endpoint. `ok: false` with a populated `assetManager.missingFiles` or `assetManager.checksumIssues` tells ops exactly what's wrong.
 
+**v0.4.0+ contract change:** `ok` no longer requires `session.loaded` to be `true`. It now means "the detector has everything it needs to attempt loading on first scan" — assets present, label map configured. Use the new `sessionLoaded` field to read current session lifecycle state, and `lastScanError` to see whether the most recent `scan()` failed silently. `validateAssets()` itself has NO side effects — it never triggers a model load. To force load at construction, pass `eagerInit: true` in the module settings.
+
 ## Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
-| `scan()` always returns `[]` | Run `validateAssets()` — probably missing JARs or model files. Check the `bx-aisentinel-onnx` LogBox channel. |
+| `scan()` always returns `[]` | Call `getLastScanError()` first — non-empty means a real error was caught. Empty + still no hits → run `validateAssets()`; probably missing JARs, missing model files, or empty `id2label`. Check the `bx-aisentinel-onnx` LogBox channel. |
+| `NoClassDefFoundError: ai/djl/modality/nlp/preprocess/Tokenizer` | Missing the DJL `api-*.jar` in `lib/`. The `tokenizers` extension JAR depends on it. See the install steps above. |
 | `UnverifiedModel` error during download | The registry entry doesn't have a pinned SHA-256. Pass `acceptUnverified: true` if you trust the source, or switch to `manual` mode. |
 | `UnverifiedLicense` error during download | The model's license hasn't been vetted by the module maintainer. Pass `acceptUnverifiedLicense: true` after confirming terms yourself, or pick a different model. |
 | `PostDownloadValidationFailed` | Download succeeded but the file is still missing or wrong-checksum. Network intermittency or a 30x redirect that CFHTTP didn't follow. Retry with `manual` mode. |
 | `Checksum mismatch` | File was tampered, corrupted, or the registry entry is stale. Delete the file and re-download. Do NOT disable verification. |
 | `cbjavaloader not found` | `box install` didn't pull the dep. Re-run or check network access to ForgeBox. |
+| `validateAssets().ok` always `true` but `scan()` still empty | Asset readiness is now distinct from session-loaded state (v0.4.0+). Check `validateAssets().sessionLoaded` and `validateAssets().lastScanError`. Set `eagerInit: true` in settings to force-load at construction. |
 
 ## Development
 

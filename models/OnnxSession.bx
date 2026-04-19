@@ -80,8 +80,16 @@ class singleton {
             variables.ortSession = variables.ortEnvironment.createSession( variables.modelPath );
 
             // HuggingFace tokenizer — one instance per model.
-            var tokenizerClass = createObject( "java", "ai.djl.huggingface.tokenizers.HuggingFaceTokenizer" );
-            variables.tokenizer = tokenizerClass.newInstance( variables.tokenizerPath );
+            // IMPORTANT: pass a java.nio.file.Path, NOT a String. DJL's
+            // newInstance(String) overload treats its arg as a HuggingFace
+            // model identifier and downloads it from huggingface.co; the
+            // newInstance(Path) overload loads from disk. We always want the
+            // latter — assets have already been validated locally by the
+            // ModelAssetManager.
+            var tokenizerClass   = createObject( "java", "ai.djl.huggingface.tokenizers.HuggingFaceTokenizer" );
+            var tokenizerPathAbs = expandPath( variables.tokenizerPath );
+            var tokenizerPathObj = createObject( "java", "java.io.File" ).init( tokenizerPathAbs ).toPath();
+            variables.tokenizer  = tokenizerClass.newInstance( tokenizerPathObj );
 
             variables.loaded = true;
             variables.loadError = "";
@@ -138,9 +146,18 @@ class singleton {
         var attention = encoding.getAttentionMask();
         var offsets   = encoding.getCharTokenSpans();
 
+        // Special tokens (CLS, SEP, PAD) and added tokens come back from DJL
+        // with a null CharSpan — they don't correspond to any character in the
+        // source text. Map those to [0,0], which is the same sentinel the
+        // EntityDecoder uses to skip non-source tokens (per its sub-word
+        // filtering logic).
         var offsetPairs = [];
         for ( var i = 1; i <= arrayLen( offsets ); i++ ) {
-            offsetPairs.append( [ offsets[ i ].getStart(), offsets[ i ].getEnd() ] );
+            if ( isNull( offsets[ i ] ) ) {
+                offsetPairs.append( [ 0, 0 ] );
+            } else {
+                offsetPairs.append( [ offsets[ i ].getStart(), offsets[ i ].getEnd() ] );
+            }
         }
 
         return {
@@ -168,10 +185,13 @@ class singleton {
         var inputTensor = _createTensor( idsLong );
         var maskTensor  = _createTensor( maskLong );
 
-        var inputs = {
-            "input_ids"      : inputTensor,
-            "attention_mask" : maskTensor
-        };
+        // OrtSession.run() expects Map<String, OnnxTensor>. A BoxLang struct
+        // literal is keyed by ortus.boxlang.runtime.scopes.Key, not String —
+        // ONNX Runtime's internal cast to String fails with ClassCastException.
+        // Build a real java.util.HashMap so the keys are native java.lang.String.
+        var inputs = createObject( "java", "java.util.HashMap" ).init();
+        inputs.put( javaCast( "string", "input_ids" ),      inputTensor );
+        inputs.put( javaCast( "string", "attention_mask" ), maskTensor );
 
         var outputs = variables.ortSession.run( inputs );
         var rawLogits = outputs.get( 0 ).getValue();

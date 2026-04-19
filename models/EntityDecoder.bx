@@ -98,8 +98,21 @@ class {
             var bio     = tagInfo.bio;       // "B", "I", or "O"
             var entity  = tagInfo.entity;    // e.g. "PER" — "" for O
 
-            // B-LABEL starts a new span (closing any open one first).
-            if ( bio == "B" ) {
+            // I-LABEL with a matching open span: extend it. Same behavior for
+            // both BIO and IO models — adjacent same-label tokens form one span.
+            if ( bio == "I" && entity == openLabel && len( openLabel ) ) {
+                openEnd     = offset[ 2 ];
+                openSumConf = openSumConf + confidence;
+                openCount   = openCount + 1;
+                continue;
+            }
+
+            // B-LABEL always opens. I-LABEL with no matching open span ALSO
+            // opens — this is the IO-tagging case (Piiranha and similar models
+            // emit only I- prefixes, never B-, so the decoder must treat the
+            // first I-LABEL of a run as the span opener). Closes any open span
+            // of a different label first.
+            if ( bio == "B" || ( bio == "I" && entity != openLabel ) ) {
                 if ( len( openLabel ) ) {
                     hits.append( _flushHit( openLabel, openStart, openEnd, openSumConf, openCount, arguments.sourceText, arguments.labelToSentinel ) );
                 }
@@ -111,15 +124,7 @@ class {
                 continue;
             }
 
-            // I-LABEL extends the open span iff it matches.
-            if ( bio == "I" && entity == openLabel && len( openLabel ) ) {
-                openEnd     = offset[ 2 ];
-                openSumConf = openSumConf + confidence;
-                openCount   = openCount + 1;
-                continue;
-            }
-
-            // O (or mismatched I-): close any open span.
+            // O: close any open span.
             if ( len( openLabel ) ) {
                 hits.append( _flushHit( openLabel, openStart, openEnd, openSumConf, openCount, arguments.sourceText, arguments.labelToSentinel ) );
                 openLabel = "";
@@ -156,10 +161,35 @@ class {
         if ( avgConf < variables.confidenceFloor ) return javaCast( "null", "" );
         if ( !arguments.labelToSentinel.keyExists( arguments.entity ) ) return javaCast( "null", "" );
 
+        // Tokenizer offsets from DJL are 0-based with exclusive end (the
+        // Python / HF convention). Sentinel Hit positions are CFML-style
+        // 1-based with inclusive end. Translate at the boundary so consumers
+        // (mid(), redactInline(), audit log) see consistent 1-based positions
+        // and value extraction lands on the right characters.
+        var oneBasedStart = arguments.startPos + 1;
+        var oneBasedEnd   = arguments.endPos;                 // exclusive 0-based == inclusive 1-based
+        var charLength    = arguments.endPos - arguments.startPos;
+        var rawValue      = mid( arguments.sourceText, oneBasedStart, charLength );
+
+        // SentencePiece-style tokenizers (mdeberta, XLM-R, etc.) encode word
+        // boundaries as part of the token, so non-first-content tokens come
+        // back with a leading space in their span. For sentinel redaction we
+        // want the entity itself, not the whitespace around it — otherwise
+        // replacing " 742" produces "lives at⟦TOKEN⟧" with no separating
+        // space. Trim leading + trailing whitespace and bump start/end to
+        // match the trimmed bounds.
+        var leadingTrimmed = ltrim( rawValue );
+        var leadingWs      = len( rawValue ) - len( leadingTrimmed );
+        var trimmedValue   = rtrim( leadingTrimmed );
+        var trailingWs     = len( leadingTrimmed ) - len( trimmedValue );
+
+        // A pure-whitespace span is meaningless as an entity — drop it.
+        if ( !len( trimmedValue ) ) return javaCast( "null", "" );
+
         return {
-            "start"      : arguments.startPos,
-            "end"        : arguments.endPos,
-            "value"      : mid( arguments.sourceText, arguments.startPos, arguments.endPos - arguments.startPos + 1 ),
+            "start"      : oneBasedStart + leadingWs,
+            "end"        : oneBasedEnd - trailingWs,
+            "value"      : trimmedValue,
             "label"      : arguments.labelToSentinel[ arguments.entity ],
             "category"   : variables.category,
             "priority"   : variables.priority,
@@ -194,9 +224,12 @@ class {
     }
 
     /**
-     * Argmax over a numeric row. Returns `{ index: numeric, confidence: numeric }`.
-     * `confidence` is the raw logit value — callers can softmax outside if
-     * a probability-normalized score is needed.
+     * Argmax over a numeric row. Returns `{ index: numeric, confidence: numeric }`
+     * where `confidence` is the SOFTMAX PROBABILITY (0–1) of the winning
+     * label — not the raw logit. This makes `confidenceFloor` semantically
+     * meaningful as a probability threshold (e.g. 0.5 = "model is more
+     * confident than not"). Subtracts the max before exp() for numeric
+     * stability on large positive logits.
      */
     private struct function _argmax( required array row ) {
         var bestIdx   = 0;    // 0-based to match HF id2label
@@ -207,7 +240,17 @@ class {
                 bestIdx   = i - 1;
             }
         }
-        return { "index": bestIdx, "confidence": bestValue };
+
+        // Softmax probability of the winner. exp(bestValue - bestValue) = 1
+        // contributes to the numerator, so the winner's prob is 1 / sumExp
+        // where sumExp uses (v - bestValue) shifts.
+        var sumExp = 0;
+        for ( var v in arguments.row ) {
+            sumExp = sumExp + exp( v - bestValue );
+        }
+        var prob = sumExp > 0 ? 1 / sumExp : 0;
+
+        return { "index": bestIdx, "confidence": prob };
     }
 
 }
